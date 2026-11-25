@@ -51,15 +51,15 @@ func TestMemoryReserveAndRelease(t *testing.T) {
 	}
 }
 
-func TestMemoryReleaseCapsAtCapacity(t *testing.T) {
+func TestMemoryReleaseRestoresSeatsAfterRebuild(t *testing.T) {
 	ctx := t.Context()
 	m := inventory.NewMemory()
-	_ = m.Add(ctx, "e", 5)
-	_ = m.Reserve(ctx, "e", 2)
-	_ = m.Release(ctx, "e", 2)
-	_ = m.Release(ctx, "e", 2)
-	if got := remaining(t, m, "e"); got != 5 {
-		t.Fatalf("remaining = %d, want 5", got)
+	_ = m.Add(ctx, "e", 8) // capacity 10 with 2 held at rebuild
+	if err := m.Release(ctx, "e", 2); err != nil {
+		t.Fatal(err)
+	}
+	if got := remaining(t, m, "e"); got != 10 {
+		t.Fatalf("remaining = %d, want 10", got)
 	}
 }
 
@@ -71,10 +71,6 @@ func TestMemoryAddReplaces(t *testing.T) {
 	_ = m.Add(ctx, "e", 7)
 	if got := remaining(t, m, "e"); got != 7 {
 		t.Fatalf("remaining = %d, want 7", got)
-	}
-	_ = m.Release(ctx, "e", 100)
-	if got := remaining(t, m, "e"); got != 7 {
-		t.Fatalf("capacity after replace = %d, want 7", got)
 	}
 }
 

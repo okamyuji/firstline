@@ -10,8 +10,8 @@ import (
 )
 
 type seats struct {
-	mu                  sync.Mutex
-	remaining, capacity int
+	mu        sync.Mutex
+	remaining int
 }
 
 type memory struct {
@@ -38,7 +38,7 @@ func (m *memory) get(id string) (*seats, error) {
 func (m *memory) Add(_ context.Context, id string, capacity int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.events[id] = &seats{remaining: capacity, capacity: capacity}
+	m.events[id] = &seats{remaining: capacity}
 	return nil
 }
 
@@ -69,7 +69,7 @@ func (m *memory) Release(_ context.Context, id string, q int) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.remaining = min(s.remaining+q, s.capacity)
+	s.remaining += q
 	return nil
 }
 
