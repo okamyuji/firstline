@@ -1,0 +1,4 @@
+/bin/
+/tools/tla/
+*.out
+/e2e/tmp/
