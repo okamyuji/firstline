@@ -99,7 +99,7 @@
   - 仕様の遷移の表にない組み合わせの動作は書かない
 - [ ] 不変条件を書く。`NoOversell`は`held`と`purchased`の枚数の合計が`Capacity`以下、`ReleaseOnce`は席を戻した回数が購入ごとに1以下であること
 - [ ] 活性を書く。`PaidEndsWell`は`paid`の購入がいずれ`purchased`か`refunded`になること。期限切れ、払い戻しの再試行、照合の動作に`WF_vars`を付ける
-- [ ] `spec/Purchase.cfg`を`Capacity = 2`、`Buyers = {b1, b2, b3}`で書き、`INVARIANT NoOversell ReleaseOnce`と`PROPERTY PaidEndsWell`を入れる
+- [ ] `spec/Purchase.cfg`を`Capacity = 4`（`MaxQuantity`の4枚まですべての枚数を試す）、`Buyers = {b1, b2, b3}`で書き、`INVARIANT NoOversell ReleaseOnce SeatsMatch`と`PROPERTY PaidEndsWell`を入れる
 - [ ] `scripts/tlc.sh`を実行し、`Model checking completed. No error has been found.`が出ることを確かめる
 - [ ] 不変条件が働くことを確かめる。保留の作成から`remaining`の条件を外した写しで実行すると`NoOversell`が破れることを見て、写しを捨てる
 - [ ] コミットする（`feat(spec): add TLA+ model of purchase states`）
