@@ -41,19 +41,22 @@ func (s *Store) query(name string, nargs int) (string, error) {
 func Placeholders(q string) int {
 	n := 0
 	for i := 0; i < len(q); i++ {
-		switch {
-		case q[i] == '?':
+		if q[i] == '?' {
 			n++
-		case q[i] == '\'' || q[i] == '"':
-			i = skipPast(q, i+1, q[i:i+1])
-		case strings.HasPrefix(q[i:], "--"):
-			i = skipPast(q, i+2, "\n")
-		case strings.HasPrefix(q[i:], "/*"):
-			i = skipPast(q, i+2, "*/")
+			continue
+		}
+		for _, p := range skipped {
+			if strings.HasPrefix(q[i:], p[0]) {
+				i = skipPast(q, i+len(p[0]), p[1])
+				break
+			}
 		}
 	}
 	return n
 }
+
+// skipped pairs the start of quoted text or a comment with its end.
+var skipped = [][2]string{{"'", "'"}, {`"`, `"`}, {"--", "\n"}, {"/*", "*/"}}
 
 // skipPast returns the index of the last byte of the first end at or after
 // from, or len(q) when there is none.

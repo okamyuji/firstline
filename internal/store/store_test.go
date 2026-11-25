@@ -37,6 +37,10 @@ func TestPlaceholders(t *testing.T) {
 		{"SELECT a / 2, ?", 1},
 		{"SELECT 'open ?", 0},
 		{"SELECT ? /* open ?", 1},
+		{"SELECT '', \"\", ?", 1},
+		{"SELECT 1 --\n, ?", 1},
+		{"SELECT /**/ ?", 1},
+		{"SELECT /*/ ? */ ?", 1},
 	} {
 		if got := Placeholders(c.q); got != c.want {
 			t.Errorf("Placeholders(%q) = %d, want %d", c.q, got, c.want)
