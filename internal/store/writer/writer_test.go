@@ -604,3 +604,28 @@ func TestBatchErrorOutsideItemsFailsEveryItem(t *testing.T) {
 		t.Errorf("rows = %d, want 0", n)
 	}
 }
+
+// A failed ROLLBACK TO must fail the batch; bun's Tx.RunInTx would drop that error.
+func TestFailedSavepointRollbackFailsEveryItem(t *testing.T) {
+	db, c, log := openDB(t), newFakeClock(), &txLog{}
+	w := newWriter(t, db, opts(c, 8192))
+	res := enqueueDo(t, w, []Apply{
+		log.insert(1),
+		func(ctx context.Context, tx bun.Tx) error {
+			if _, err := tx.ExecContext(ctx, "ROLLBACK"); err != nil {
+				return err
+			}
+			return errors.New("sold out")
+		},
+		log.insert(2),
+	})
+	start(t, w)
+	for i, r := range res {
+		if err := <-r; err == nil {
+			t.Errorf("item %d: err = nil, want the batch error", i)
+		}
+	}
+	if n := countRows(t, db); n != 0 {
+		t.Errorf("rows = %d, want 0", n)
+	}
+}
