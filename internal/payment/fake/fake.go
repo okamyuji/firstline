@@ -61,8 +61,8 @@ func New(clock func() time.Time, after func(time.Duration) <-chan time.Time, del
 	}
 }
 
-// SetNotifier must be called once. Notifications created before it are held
-// until it runs.
+// SetNotifier must be called once; later calls are ignored and keep the first
+// notifier. Notifications created before it are held until it runs.
 func (f *Fake) SetNotifier(n port.PaymentNotifier) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

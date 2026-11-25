@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -289,5 +290,55 @@ func TestStartAfterStopSpawnsNothing(t *testing.T) {
 	case <-m.reqs:
 		t.Fatal("timer requested after Stop")
 	default:
+	}
+}
+
+// The clock moves before every retry; each notification must still carry the
+// completion time. An atomic clock keeps the check independent of -race.
+func TestCompletionTimeStaysAcrossRetries(t *testing.T) {
+	m := newManual()
+	var now atomic.Int64
+	now.Store(t0.UnixMilli())
+	f := New(func() time.Time { return time.UnixMilli(now.Load()).UTC() }, m.after, 3*time.Second, Complete)
+	t.Cleanup(f.Stop)
+	n := newNotifier()
+	n.errs = 2
+	f.SetNotifier(n)
+	_, _, _ = f.Start(context.Background(), "p1", 1)
+	now.Store(t0.Add(3 * time.Second).UnixMilli())
+	m.next(t).ch <- t0
+	for i := range 2 {
+		n.wait(t)
+		now.Store(t0.Add(time.Duration(i+1) * time.Minute).UnixMilli())
+		m.next(t).ch <- t0
+	}
+	n.wait(t)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.completed) != 1 || !n.completed[0].At.Equal(t0.Add(3*time.Second)) {
+		t.Fatalf("completed = %v, want one completion at %v", n.completed, t0.Add(3*time.Second))
+	}
+}
+
+// When Stop and the timer race, sleep must report the stop even if the timer
+// case wins the select, or a notification goes out after Stop.
+func TestTimerFiringDuringStopSendsNothing(t *testing.T) {
+	for range 64 {
+		n := newNotifier()
+		f := New(func() time.Time { return t0 }, nil, 3*time.Second, Complete)
+		f.after = func(time.Duration) <-chan time.Time {
+			f.cancel()
+			ch := make(chan time.Time, 1)
+			ch <- t0
+			return ch
+		}
+		f.SetNotifier(n)
+		_, _, _ = f.Start(context.Background(), "p1", 1)
+		f.Stop()
+		select {
+		case <-n.calls:
+			t.Fatal("notified after Stop")
+		default:
+		}
 	}
 }
