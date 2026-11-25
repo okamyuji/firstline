@@ -606,23 +606,26 @@ func TestBatchErrorOutsideItemsFailsEveryItem(t *testing.T) {
 }
 
 // A failed ROLLBACK TO must fail the batch; bun's Tx.RunInTx would drop that error.
+// The item's own error stays in the batch error: SQLite ends the transaction by
+// itself on errors such as SQLITE_FULL, and the cause must not be lost.
 func TestFailedSavepointRollbackFailsEveryItem(t *testing.T) {
 	db, c, log := openDB(t), newFakeClock(), &txLog{}
 	w := newWriter(t, db, opts(c, 8192))
+	errSoldOut := errors.New("sold out")
 	res := enqueueDo(t, w, []Apply{
 		log.insert(1),
 		func(ctx context.Context, tx bun.Tx) error {
 			if _, err := tx.ExecContext(ctx, "ROLLBACK"); err != nil {
 				return err
 			}
-			return errors.New("sold out")
+			return errSoldOut
 		},
 		log.insert(2),
 	})
 	start(t, w)
 	for i, r := range res {
-		if err := <-r; err == nil {
-			t.Errorf("item %d: err = nil, want the batch error", i)
+		if err := <-r; !errors.Is(err, errSoldOut) {
+			t.Errorf("item %d: err = %v, want the batch error holding the item error", i, err)
 		}
 	}
 	if n := countRows(t, db); n != 0 {

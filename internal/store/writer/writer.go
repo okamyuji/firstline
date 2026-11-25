@@ -173,7 +173,12 @@ func (w *Writer) applyInSavepoint(ctx context.Context, tx bun.Tx, it item) (item
 		if w.opt.IsIOError(err) {
 			return nil, err
 		}
-		return err, sp.Rollback()
+		// SQLite may already have rolled back the whole transaction (SQLITE_FULL,
+		// SQLITE_NOMEM), so ROLLBACK TO fails with "no such savepoint"; keep err as the cause.
+		if rbErr := sp.Rollback(); rbErr != nil {
+			return nil, errors.Join(err, rbErr)
+		}
+		return err, nil
 	}
 	return nil, sp.Commit()
 }

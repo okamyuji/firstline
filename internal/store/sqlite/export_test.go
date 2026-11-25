@@ -25,3 +25,5 @@ func PingRaw(ctx context.Context, dsn string) error {
 	defer func() { _ = db.Close() }()
 	return db.PingContext(ctx)
 }
+
+var IsIOError = isIOError
