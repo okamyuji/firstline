@@ -55,35 +55,44 @@ awk -v t="$total" 'BEGIN { exit !(t >= 80) }' || {
 	exit 1
 }
 
+# gremlins_gate <args...> runs gremlins in the current directory and fails on
+# lived mutants, a missing summary, or uncovered mutants outside const declarations.
+gremlins_gate() {
+	local out lived uncovered
+	# gremlins exits 0 even when mutants survive, so read the summary.
+	out=$(gremlins unleash --timeout-coefficient 20 "$@")
+	echo "$out"
+	lived=$(echo "$out" | sed -n 's/.*Lived: \([0-9][0-9]*\).*/\1/p' | tail -n 1)
+	if [ -z "$lived" ]; then
+		echo "gremlins: summary line with Lived not found" >&2
+		return 1
+	fi
+	if [ "$lived" -gt 0 ]; then
+		echo "gremlins: ${lived} mutants lived" >&2
+		return 1
+	fi
+	# TIMED OUT counts as killed: the mutant broke a loop or a wait and the tests hung.
+	# Coverage cannot reach a const expression, so only uncovered mutants outside const declarations fail.
+	uncovered=$(echo "$out" | sed -n 's/^ *NOT COVERED [A-Z_]* at \(.*\):\([0-9][0-9]*\):[0-9][0-9]*$/\1 \2/p' |
+		while read -r file line; do in_const "$file" "$line" || echo "$file:$line"; done | sort -u)
+	if [ -n "$uncovered" ]; then
+		echo "gremlins: mutants not covered by any test:" >&2
+		echo "$uncovered" >&2
+		return 1
+	fi
+}
+
 echo "== gremlins"
 base=${BASE:-$(git merge-base HEAD main)}
-# gremlins exits 0 even when mutants survive, so read the summary.
-out=$(gremlins unleash --timeout-coefficient 20 --diff "$base")
-echo "$out"
-lived=$(echo "$out" | sed -n 's/.*Lived: \([0-9][0-9]*\).*/\1/p' | tail -n 1)
-if [ -z "$lived" ]; then
-	echo "gremlins: summary line with Lived not found" >&2
-	exit 1
-fi
-if [ "$lived" -gt 0 ]; then
-	echo "gremlins: ${lived} mutants lived" >&2
-	exit 1
-fi
-# TIMED OUT counts as killed: the mutant broke a loop or a wait and the tests hung.
-# Coverage cannot reach a const expression, so only uncovered mutants outside const declarations fail.
-uncovered=$(echo "$out" | sed -n 's/^ *NOT COVERED [A-Z_]* at \(.*\):\([0-9][0-9]*\):[0-9][0-9]*$/\1 \2/p' |
-	while read -r file line; do in_const "$file" "$line" || echo "$file:$line"; done | sort -u)
-if [ -n "$uncovered" ]; then
-	echo "gremlins: mutants not covered by any test:" >&2
-	echo "$uncovered" >&2
-	exit 1
-fi
+# tools/doclint is its own module: root tests cannot cover it, and --diff inside it
+# matches no file, so it gets a full run in the doclint step instead.
+gremlins_gate --diff "$base" -E '^tools/'
 
 echo "== crap"
 scripts/crap.sh cover.out
 
 echo "== doclint"
-(cd tools/doclint && go vet ./... && golangci-lint run && go test -count=1 ./... && go run . ../../docs)
+(cd tools/doclint && go vet ./... && golangci-lint run && go test -count=1 ./... && gremlins_gate && go run . ../../docs)
 
 echo "== tlc"
 bash scripts/tlc.sh
