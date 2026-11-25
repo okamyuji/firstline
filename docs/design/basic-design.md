@@ -605,9 +605,9 @@ CloudWatch Agentの設定は次のとおりです。journaldの収集に対応�
 | 整形と静的解析 | `go fmt`、`go vet`、golangci-lint、staticcheck |
 | ビルド | `go build ./...` |
 | Goの書き方 | Goファイルを編集する前にmodern-go-guidelinesの`list --file-path`で指針を確かめ、当てはまる指針に従う |
-| テスト | `go test --count=1 ./...`。SQLiteは一時ファイルで、PostgreSQLとMySQLはtestcontainersで、3実装に同じテストを通す |
+| テスト | `go test -race --count=1 ./...`。SQLiteは一時ファイルで、PostgreSQLとMySQLはtestcontainersで、3実装に同じテストを通す |
 | カバレッジ | 80%以上 |
-| 変異テスト | 変更行の変異をすべて殺す |
+| 変異テスト | mainから分かれた後の変更行の変異をすべて殺す。テストが実行しない行の変異も失敗とし、定数宣言の変異だけを除く |
 | CRAP | 関数ごとに15以下 |
 | 秘密情報 | gitleaks |
 | E2E | 購入、期限切れ後の払い戻し、照会、主催者のログインからイベント作成までを実際のバイナリで通す |
