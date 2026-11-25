@@ -104,7 +104,6 @@ const (
 	org     = "org1"
 	evt     = "evt1"
 	start   = int64(2_000_000)
-	endAt   = int64(3_000_000)
 	saleAt  = int64(1_000_000)
 	price   = int64(5000)
 	nextNum = 1
