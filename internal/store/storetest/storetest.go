@@ -180,6 +180,10 @@ func testNames(t *testing.T, e *env) {
 		if body := strings.TrimSuffix(strings.TrimSpace(withoutComments(string(b))), ";"); strings.Contains(body, ";") {
 			t.Errorf("%s.sql holds more than one statement", n)
 		}
+		// bun replaces every "?", so one in a comment or quote would shift the arguments.
+		if q := string(b); strings.Count(q, "?") != store.Placeholders(q) {
+			t.Errorf("%s.sql has a \"?\" inside a comment or quoted text", n)
+		}
 	}
 }
 
@@ -331,13 +335,19 @@ func testSeatCounters(t *testing.T, e *env) {
 	e.seedEvent("evt2", org, start, 10)
 	e.exec("hold_seats", 5, 5, evt, 5)
 	e.exec("hold_seats", 6, 6, "evt2", 6)
-	eq(t, "sell 2", e.exec("sell_seats", 2, 2, evt), 1)
+	eq(t, "sell 2", e.exec("sell_seats", 2, 2, evt, 2), 1)
 	eq(t, "after sell", e.sales(evt), salesRow{evt, 3, 2, 5, 0})
-	eq(t, "release 3", e.exec("release_seats", 3, 3, evt), 1)
+	eq(t, "sell 4 of 3 held", e.exec("sell_seats", 4, 4, evt, 4), 0)
+	eq(t, "release 4 of 3 held", e.exec("release_seats", 4, 4, evt, 4), 0)
+	eq(t, "unchanged by over-count", e.sales(evt), salesRow{evt, 3, 2, 5, 0})
+	eq(t, "release exactly held", e.exec("release_seats", 3, 3, evt, 3), 1)
 	eq(t, "after release", e.sales(evt), salesRow{evt, 0, 2, 8, 0})
+	e.exec("hold_seats", 2, 2, evt, 2)
+	eq(t, "sell exactly held", e.exec("sell_seats", 2, 2, evt, 2), 1)
+	eq(t, "after selling all held", e.sales(evt), salesRow{evt, 0, 4, 6, 0})
 	eq(t, "count refund", e.exec("count_refund", evt), 1)
 	e.exec("count_refund", evt)
-	eq(t, "after two refunds", e.sales(evt), salesRow{evt, 0, 2, 8, 2})
+	eq(t, "after two refunds", e.sales(evt), salesRow{evt, 0, 4, 6, 2})
 	eq(t, "other event untouched", e.sales("evt2"), salesRow{"evt2", 6, 0, 4, 0})
 }
 

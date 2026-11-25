@@ -455,7 +455,7 @@ firstlineは環境変数で設定します。
 | 環境変数 | 値 | 既定 |
 |---|---|---|
 | `FIRSTLINE_STORE` | `sqlite`、`postgres`、`mysql` | `sqlite` |
-| `FIRSTLINE_DB_PATH` | SQLiteのファイルのパス | `/var/lib/firstline/firstline.db` |
+| `FIRSTLINE_DB_PATH` | SQLiteのファイルのパス。DSNのURIで意味を持つ`?`と`#`を含むと起動しない | `/var/lib/firstline/firstline.db` |
 | `FIRSTLINE_DSN` | PostgreSQLかMySQLの接続文字列。`FIRSTLINE_STORE`が`sqlite`のときは使わない | なし |
 | `FIRSTLINE_INVENTORY` | `memory`、`db` | `memory` |
 | `FIRSTLINE_ADDR` | 待ち受けるアドレス | `:443` |

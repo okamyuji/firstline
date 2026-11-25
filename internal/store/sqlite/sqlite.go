@@ -7,6 +7,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/okamyuji/firstline/internal/store"
 	"github.com/uptrace/bun"
@@ -41,6 +42,11 @@ func ReadDSN(path string) string {
 // Open opens the write pool first and pings it so the file is in WAL before
 // the read-only pool opens: a mode=ro connection cannot switch the journal mode.
 func Open(ctx context.Context, path string) (*store.Store, error) {
+	// SQLite reads the DSN as a URI: "?" starts the query and "#" a fragment, so
+	// the file opened would not be path and mode=ro would be lost.
+	if strings.ContainsAny(path, "?#") {
+		return nil, fmt.Errorf("sqlite path %q must not contain '?' or '#'", path)
+	}
 	msqlite.StrictPragmas(true)
 
 	w, err := openPool(ctx, WriteDSN(path), 1)

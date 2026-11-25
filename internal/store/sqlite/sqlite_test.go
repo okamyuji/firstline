@@ -264,3 +264,15 @@ func TestSelectAndMigrateError(t *testing.T) {
 		t.Fatal("bad schema accepted")
 	}
 }
+
+func TestOpenRejectsURICharacters(t *testing.T) {
+	for _, name := range []string{"a?b", "a#b"} {
+		dir := t.TempDir()
+		if _, err := fsqlite.Open(t.Context(), filepath.Join(dir, name, "f.db")); err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("Open with %q = %v, want an error naming the path", name, err)
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+			t.Errorf("Open with %q created %v", name, entries)
+		}
+	}
+}
