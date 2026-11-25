@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -145,7 +146,17 @@ func opts(c *fakeClock, queueCap int) Options {
 		Now:          c.Now,
 		After:        c.After,
 		OnSyncResult: func(time.Time, time.Duration) {},
+		OnAsyncError: func(error) {},
 	}
+}
+
+func newWriter(t *testing.T, db *bun.DB, o Options) *Writer {
+	t.Helper()
+	w, err := New(db, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w
 }
 
 func start(t *testing.T, w *Writer) {
@@ -154,21 +165,22 @@ func start(t *testing.T, w *Writer) {
 	t.Cleanup(w.Stop)
 }
 
-// enqueueDo starts Do calls and waits until all of them sit in the channel.
+// enqueueDo starts Do calls one by one so the channel holds them in slice order.
 func enqueueDo(t *testing.T, w *Writer, applies []Apply) []chan error {
 	t.Helper()
 	res := make([]chan error, len(applies))
+	queued := w.Stats().QueueLen
 	for i, a := range applies {
 		res[i] = make(chan error, 1)
 		go func() { res[i] <- w.Do(context.Background(), a) }()
+		eventually(t, func() bool { return w.Stats().QueueLen == queued+i+1 })
 	}
-	eventually(t, func() bool { return w.Stats().QueueLen == len(applies) })
 	return res
 }
 
 func TestBatchesUpTo64(t *testing.T) {
 	db, c, log := openDB(t), newFakeClock(), &txLog{}
-	w := New(db, opts(c, 8192))
+	w := newWriter(t, db, opts(c, 8192))
 	for i := range 200 {
 		w.Send(log.insert(int64(i)))
 	}
@@ -190,7 +202,7 @@ func TestBatchesUpTo64(t *testing.T) {
 
 func TestFlushesAfter15ms(t *testing.T) {
 	db, c, log := openDB(t), newFakeClock(), &txLog{}
-	w := New(db, opts(c, 8192))
+	w := newWriter(t, db, opts(c, 8192))
 	start(t, w)
 	w.Send(log.insert(1))
 	select {
@@ -212,7 +224,7 @@ func TestFlushesAfter15ms(t *testing.T) {
 
 func TestSyncItemFlushesWithoutWaiting(t *testing.T) {
 	db, c, log := openDB(t), newFakeClock(), &txLog{}
-	w := New(db, opts(c, 8192))
+	w := newWriter(t, db, opts(c, 8192))
 	start(t, w)
 	if err := w.Do(t.Context(), log.insert(1)); err != nil {
 		t.Fatal(err)
@@ -236,7 +248,7 @@ func TestSyncItemsShareOneCommit(t *testing.T) {
 		defer mu.Unlock()
 		ats, waits = append(ats, at), append(waits, wait)
 	}
-	w := New(db, o)
+	w := newWriter(t, db, o)
 	applies := make([]Apply, 50)
 	for i := range applies {
 		applies[i] = log.insert(int64(i))
@@ -269,7 +281,7 @@ func TestFailedItemGetsItsOwnError(t *testing.T) {
 	if _, err := db.NewInsert().Model(&row{ID: 30}).Exec(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	w := New(db, opts(c, 8192))
+	w := newWriter(t, db, opts(c, 8192))
 	applies := make([]Apply, 64)
 	for i := range applies {
 		applies[i] = log.insert(int64(i + 1))
@@ -297,7 +309,7 @@ func TestIOErrorCallsOnFatalAndRepliesNothing(t *testing.T) {
 		}
 		fatal.Add(1)
 	}
-	w := New(db, o)
+	w := newWriter(t, db, o)
 	res := enqueueDo(t, w, []Apply{
 		log.insert(1),
 		func(context.Context, bun.Tx) error { return errIO },
@@ -324,7 +336,7 @@ func TestIOErrorCallsOnFatalAndRepliesNothing(t *testing.T) {
 
 func TestDoWaitsAfterEnqueueEvenIfCtxDone(t *testing.T) {
 	db, c, log := openDB(t), newFakeClock(), &txLog{}
-	w := New(db, opts(c, 8192))
+	w := newWriter(t, db, opts(c, 8192))
 	ctx, cancel := context.WithCancel(t.Context())
 	res := make(chan error, 1)
 	go func() { res <- w.Do(ctx, log.insert(1)) }()
@@ -341,7 +353,7 @@ func TestDoWaitsAfterEnqueueEvenIfCtxDone(t *testing.T) {
 
 func TestDoReturnsCtxErrWhenQueueFull(t *testing.T) {
 	db, c, log := openDB(t), newFakeClock(), &txLog{}
-	w := New(db, opts(c, 1))
+	w := newWriter(t, db, opts(c, 1))
 	w.Send(log.insert(1))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Millisecond)
 	defer cancel()
@@ -360,7 +372,7 @@ func TestDoReturnsCtxErrWhenQueueFull(t *testing.T) {
 
 func TestSendDropsWhenFull(t *testing.T) {
 	db, c, log := openDB(t), newFakeClock(), &txLog{}
-	w := New(db, opts(c, 1))
+	w := newWriter(t, db, opts(c, 1))
 	w.Send(log.insert(1))
 	w.Send(log.insert(2))
 	w.Send(log.insert(3))
@@ -371,7 +383,7 @@ func TestSendDropsWhenFull(t *testing.T) {
 
 func TestStopDrainsAndRejects(t *testing.T) {
 	db, c, log := openDB(t), newFakeClock(), &txLog{}
-	w := New(db, opts(c, 8192))
+	w := newWriter(t, db, opts(c, 8192))
 	res := enqueueDo(t, w, []Apply{log.insert(100)})
 	for i := range 100 {
 		w.Send(log.insert(int64(i)))
@@ -396,7 +408,7 @@ func TestStopDrainsAndRejects(t *testing.T) {
 
 func TestSyncItemEndsTimerWait(t *testing.T) {
 	db, c, log := openDB(t), newFakeClock(), &txLog{}
-	w := New(db, opts(c, 8192))
+	w := newWriter(t, db, opts(c, 8192))
 	start(t, w)
 	w.Send(log.insert(1))
 	<-c.registered
@@ -405,5 +417,190 @@ func TestSyncItemEndsTimerWait(t *testing.T) {
 	}
 	if sizes := log.sizes(); len(sizes) != 1 || sizes[0] != 2 {
 		t.Errorf("tx sizes = %v, want [2]", sizes)
+	}
+}
+
+// commitCounter counts real transaction commits; savepoint releases run as RELEASE SAVEPOINT.
+type commitCounter struct{ n atomic.Int32 }
+
+func (c *commitCounter) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
+	return ctx
+}
+
+func (c *commitCounter) AfterQuery(_ context.Context, e *bun.QueryEvent) {
+	if e.Query == "COMMIT" {
+		c.n.Add(1)
+	}
+}
+
+func TestFailedItemsRollBackToTheirSavepoints(t *testing.T) {
+	c, log := newFakeClock(), &txLog{}
+	commits := &commitCounter{}
+	db := openDB(t).WithQueryHook(commits)
+	w := newWriter(t, db, opts(c, 8192))
+	applies := make([]Apply, 64)
+	for i := range applies {
+		ins := log.insert(int64(i))
+		applies[i] = ins
+		if i%2 == 1 {
+			applies[i] = func(ctx context.Context, tx bun.Tx) error {
+				if err := ins(ctx, tx); err != nil {
+					return err
+				}
+				return fmt.Errorf("item %d", i)
+			}
+		}
+	}
+	res := enqueueDo(t, w, applies)
+	start(t, w)
+	for i, r := range res {
+		err := <-r
+		want := ""
+		if i%2 == 1 {
+			want = fmt.Sprintf("item %d", i)
+		}
+		if got := fmt.Sprint(err); err == nil && want != "" || err != nil && got != want {
+			t.Errorf("item %d: err = %v, want %q", i, err, want)
+		}
+	}
+	if n := countRows(t, db); n != 32 {
+		t.Errorf("rows = %d, want 32", n)
+	}
+	if n := commits.n.Load(); n != 1 {
+		t.Errorf("commits = %d, want 1", n)
+	}
+}
+
+func TestIOErrorAfterFailedItemStopsTheBatch(t *testing.T) {
+	db, c, log := openDB(t), newFakeClock(), &txLog{}
+	o := opts(c, 8192)
+	var fatal atomic.Int32
+	o.OnFatal = func(error) { fatal.Add(1) }
+	w := newWriter(t, db, o)
+	res := enqueueDo(t, w, []Apply{
+		log.insert(1),
+		func(context.Context, bun.Tx) error { return errors.New("sold out") },
+		func(context.Context, bun.Tx) error { return errIO },
+		log.insert(2),
+	})
+	done := make(chan struct{})
+	go func() { w.Run(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run kept going after the I/O error")
+	}
+	if fatal.Load() != 1 || countRows(t, db) != 0 {
+		t.Errorf("fatal = %d, rows = %d, want 1 and 0", fatal.Load(), countRows(t, db))
+	}
+	for i, r := range res {
+		select {
+		case err := <-r:
+			t.Errorf("item %d got reply %v, want none", i, err)
+		default:
+		}
+	}
+}
+
+// Run with -race: without the RLock in Send or enqueue, a send races Stop's drain.
+func TestStopConcurrentWithSendAndDo(t *testing.T) {
+	db, c, log := openDB(t), newFakeClock(), &txLog{}
+	w := newWriter(t, db, opts(c, 8192))
+	go w.Run()
+	var wg sync.WaitGroup
+	for g := range 4 {
+		wg.Go(func() {
+			for i := range 20 {
+				id := int64(g*1000 + i)
+				w.Send(log.insert(-id - 1))
+				if err := w.Do(context.Background(), log.insert(id)); err != nil && !errors.Is(err, ErrShuttingDown) {
+					t.Error(err)
+				}
+			}
+		})
+	}
+	time.Sleep(time.Millisecond)
+	w.Stop()
+	wg.Wait()
+}
+
+func TestAsyncItemErrorGoesToOnAsyncError(t *testing.T) {
+	db, c, log := openDB(t), newFakeClock(), &txLog{}
+	o := opts(c, 8192)
+	got := make(chan error, 3)
+	o.OnAsyncError = func(err error) { got <- err }
+	w := newWriter(t, db, o)
+	failed := errors.New("bad sql")
+	w.Send(func(context.Context, bun.Tx) error { return failed })
+	w.Send(log.insert(1))
+	res := enqueueDo(t, w, []Apply{func(context.Context, bun.Tx) error { return errors.New("sold out") }})
+	go w.Run()
+	w.Stop()
+	if err := <-res[0]; err == nil {
+		t.Error("sync item: err = nil, want its error")
+	}
+	close(got)
+	var errs []error
+	for err := range got {
+		errs = append(errs, err)
+	}
+	if len(errs) != 1 || !errors.Is(errs[0], failed) {
+		t.Errorf("OnAsyncError calls = %v, want [%v]", errs, failed)
+	}
+	if n := countRows(t, db); n != 1 {
+		t.Errorf("rows = %d, want 1", n)
+	}
+}
+
+func TestNewRejectsInvalidOptions(t *testing.T) {
+	c := newFakeClock()
+	cases := map[string]func(*Options){
+		"nil IsIOError":     func(o *Options) { o.IsIOError = nil },
+		"nil OnFatal":       func(o *Options) { o.OnFatal = nil },
+		"nil Now":           func(o *Options) { o.Now = nil },
+		"nil After":         func(o *Options) { o.After = nil },
+		"nil OnSyncResult":  func(o *Options) { o.OnSyncResult = nil },
+		"nil OnAsyncError":  func(o *Options) { o.OnAsyncError = nil },
+		"zero QueueCap":     func(o *Options) { o.QueueCap = 0 },
+		"zero BatchMax":     func(o *Options) { o.BatchMax = 0 },
+		"zero BatchWait":    func(o *Options) { o.BatchWait = 0 },
+		"negative QueueCap": func(o *Options) { o.QueueCap = -1 },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			o := opts(c, 8192)
+			mutate(&o)
+			if w, err := New(nil, o); err == nil || w != nil {
+				t.Errorf("New = %v, %v; want nil and an error", w, err)
+			}
+		})
+	}
+	if _, err := New(nil, opts(c, 1)); err != nil {
+		t.Errorf("New with minimal valid options = %v", err)
+	}
+}
+
+func TestBatchErrorOutsideItemsFailsEveryItem(t *testing.T) {
+	db, c, log := openDB(t), newFakeClock(), &txLog{}
+	o := opts(c, 8192)
+	o.OnFatal = func(err error) { t.Errorf("OnFatal(%v) for a non-I/O error", err) }
+	w := newWriter(t, db, o)
+	res := enqueueDo(t, w, []Apply{
+		log.insert(1),
+		// Ending the transaction from inside an item removes its savepoint, so the release fails.
+		func(ctx context.Context, tx bun.Tx) error {
+			_, err := tx.ExecContext(ctx, "ROLLBACK")
+			return err
+		},
+		log.insert(2),
+	})
+	start(t, w)
+	for i, r := range res {
+		if err := <-r; err == nil {
+			t.Errorf("item %d: err = nil, want the batch error", i)
+		}
+	}
+	if n := countRows(t, db); n != 0 {
+		t.Errorf("rows = %d, want 0", n)
 	}
 }

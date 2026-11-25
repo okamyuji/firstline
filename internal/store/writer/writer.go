@@ -15,8 +15,8 @@ import (
 // ErrShuttingDown is returned by Do after Stop.
 var ErrShuttingDown = errors.New("writer: shutting down")
 
-// Apply writes one item inside the batch transaction. It runs again in its own
-// transaction when another item fails the batch, so its effects must stay in tx.
+// Apply writes one item inside a savepoint of the batch transaction. An error
+// rolls back only this item, so its effects must stay in tx.
 type Apply func(ctx context.Context, tx bun.Tx) error
 
 // Options configures a Writer. Every field is required.
@@ -29,8 +29,10 @@ type Options struct {
 	Now       func() time.Time
 	After     func(time.Duration) <-chan time.Time
 	// OnSyncResult is called once per sync item when its result is known;
-	// wait spans enqueue to result.
+	// wait starts when Do is called, so it includes time waiting for queue space.
 	OnSyncResult func(at time.Time, wait time.Duration)
+	// OnAsyncError receives the error of an async item, which has no caller to return it to.
+	OnAsyncError func(error)
 }
 
 // Stats is the writer part of the health snapshot.
@@ -60,18 +62,26 @@ type Writer struct {
 	stopped bool
 }
 
-func New(db *bun.DB, opt Options) *Writer {
+// New returns a Writer, or an error when a field of opt is missing or not positive.
+func New(db *bun.DB, opt Options) (*Writer, error) {
+	if opt.IsIOError == nil || opt.OnFatal == nil || opt.Now == nil || opt.After == nil ||
+		opt.OnSyncResult == nil || opt.OnAsyncError == nil {
+		return nil, errors.New("writer: every func in Options is required")
+	}
+	if opt.QueueCap <= 0 || opt.BatchMax <= 0 || opt.BatchWait <= 0 {
+		return nil, errors.New("writer: QueueCap, BatchMax and BatchWait must be positive")
+	}
 	return &Writer{
 		db:   db,
 		opt:  opt,
 		ch:   make(chan item, opt.QueueCap),
 		stop: make(chan struct{}),
 		done: make(chan struct{}),
-	}
+	}, nil
 }
 
 // Run commits until Stop, then commits what is left in the channel. It also
-// returns after an I/O error, once OnFatal has been called.
+// returns after an I/O error, once OnFatal has been called. Call it once.
 func (w *Writer) Run() {
 	defer close(w.done)
 	for {
@@ -123,45 +133,62 @@ func (w *Writer) collect(first item) []item {
 	return batch
 }
 
-// commit reports false after an I/O error: the commit may or may not be in
-// the WAL, so no item gets a result and the process must restart.
+// commit runs each item inside its own savepoint so a failed item rolls back
+// alone and the batch still commits once. It reports false after an I/O
+// error: the commit may or may not be in the WAL, so no item gets a result and
+// the process must restart.
 func (w *Writer) commit(batch []item) bool {
+	errs := make([]error, len(batch))
 	err := w.db.RunInTx(context.Background(), nil, func(ctx context.Context, tx bun.Tx) error {
-		for _, it := range batch {
-			if err := it.apply(ctx, tx); err != nil {
+		for i, it := range batch {
+			var err error
+			if errs[i], err = w.applyInSavepoint(ctx, tx, it); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
-	if err == nil {
-		w.reply(batch, nil)
-		return true
-	}
-	if w.opt.IsIOError(err) {
-		w.opt.OnFatal(err)
-		return false
-	}
-	if len(batch) == 1 {
-		w.reply(batch, err)
-		return true
-	}
-	for _, it := range batch {
-		if !w.commit([]item{it}) {
+	if err != nil {
+		if w.opt.IsIOError(err) {
+			w.opt.OnFatal(err)
 			return false
 		}
+		for i := range errs {
+			errs[i] = err
+		}
 	}
+	w.reply(batch, errs)
 	return true
 }
 
-func (w *Writer) reply(batch []item, err error) {
+// applyInSavepoint returns the item's own error, and a txErr only when the
+// batch transaction itself cannot go on.
+func (w *Writer) applyInSavepoint(ctx context.Context, tx bun.Tx, it item) (itemErr, txErr error) {
+	// bun's Tx.RunInTx drops the ROLLBACK TO error, which would commit a failed item's writes.
+	sp, err := tx.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := it.apply(ctx, sp); err != nil {
+		if w.opt.IsIOError(err) {
+			return nil, err
+		}
+		return err, sp.Rollback()
+	}
+	return nil, sp.Commit()
+}
+
+func (w *Writer) reply(batch []item, errs []error) {
 	now := w.opt.Now()
-	for _, it := range batch {
+	for i, it := range batch {
 		if it.reply == nil {
+			if errs[i] != nil {
+				w.opt.OnAsyncError(errs[i])
+			}
 			continue
 		}
 		w.opt.OnSyncResult(now, now.Sub(it.enqAt))
-		it.reply <- err
+		it.reply <- errs[i]
 	}
 }
 
@@ -206,7 +233,8 @@ func (w *Writer) Send(a Apply) {
 }
 
 // Stop rejects new items and returns after Run has committed what was queued.
-// The channel is never closed so a late sender cannot panic.
+// Call it after Run has started, or it waits forever. The channel is never
+// closed so a late sender cannot panic.
 func (w *Writer) Stop() {
 	w.mu.Lock()
 	if !w.stopped {
@@ -217,6 +245,7 @@ func (w *Writer) Stop() {
 	<-w.done
 }
 
+// Stats returns the current queue length and capacity and the dropped async item count.
 func (w *Writer) Stats() Stats {
 	return Stats{QueueLen: len(w.ch), QueueCap: cap(w.ch), DroppedTotal: w.dropped.Load()}
 }
