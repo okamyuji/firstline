@@ -8,7 +8,12 @@ limit=15
 mod=$(go list -m)
 
 cov=$(go tool cover -func="$profile")
-cyc=$(gocyclo -over 0 . | grep -v '_test\.go:' | grep -v '^[0-9]* [^ ]* [^ ]* \(\./\)\?tools/' || true)
+all=$(gocyclo -over 0 .)
+cyc=$(printf '%s\n' "$all" | grep -v '_test\.go:' | grep -v '^[0-9]* [^ ]* [^ ]* \(\./\)\?tools/' || true)
+if [ -z "$cyc" ]; then
+	echo "crap.sh: gocyclo found no functions" >&2
+	exit 1
+fi
 
 awk -v mod="$mod" -v limit="$limit" '
 FNR == NR {
