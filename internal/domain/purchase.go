@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 type State string
 
@@ -54,7 +57,8 @@ type Decision struct {
 	Mail        MailKind
 }
 
-// Next covers rows where a purchase record exists; orphan and payment_id rows live in internal/app.
+// Next covers the table rows where a purchase record exists. The orphan payment
+// and payment_id rows are not state transitions, so Next does not decide them.
 func Next(from State, ev Event, f Facts) (Decision, error) {
 	switch from {
 	case StateHeld:
@@ -68,14 +72,19 @@ func Next(from State, ev Event, f Facts) (Decision, error) {
 			return Decision{To: StateRefunded, Changed: true, Refunded: true}, nil
 		}
 	}
-	if from != StateHeld && (ev == EvPaymentFailed ||
-		(ev == EvPaymentCompleted && (from == StatePurchased || from == StateRefunding || from == StateRefunded))) {
+	noop := ev == EvPaymentFailed && slices.Contains([]State{StatePurchased, StateReleased, StateExpired, StateRefunding, StateRefunded}, from) ||
+		ev == EvPaymentCompleted && slices.Contains([]State{StatePurchased, StateRefunding, StateRefunded}, from)
+	if noop {
 		return Decision{To: from}, nil
 	}
 	return Decision{}, ErrInvalidTransition
 }
 
 func nextFromHeld(ev Event, f Facts) (Decision, error) {
+	// A zero ExpiresAt is a caller bug; treating it as a deadline would refund a paid purchase.
+	if (ev == EvPaymentCompleted || ev == EvExpire) && f.ExpiresAt.IsZero() {
+		return Decision{}, ErrInvalidTransition
+	}
 	switch ev {
 	case EvStartFailed, EvPaymentFailed:
 		return Decision{To: StateReleased, Changed: true, ReleaseSeat: true}, nil

@@ -62,7 +62,7 @@ func TestNextExpireBeforeGrace(t *testing.T) {
 }
 
 func TestNextRejectsUnlistedPairs(t *testing.T) {
-	states := []State{StateHeld, StatePurchased, StateReleased, StateExpired, StateRefunding, StateRefunded}
+	states := []State{StateHeld, StatePurchased, StateReleased, StateExpired, StateRefunding, StateRefunded, State(""), State("bogus")}
 	events := []Event{EvStartFailed, EvPaymentFailed, EvPaymentCompleted, EvExpire, EvRefundSucceeded}
 	type pair struct {
 		s State
@@ -102,13 +102,29 @@ func TestNextRejectsUnlistedPairs(t *testing.T) {
 			}
 		}
 	}
-	if n != 15 {
-		t.Errorf("unlisted pairs = %d, want 15", n)
+	if n != 25 {
+		t.Errorf("unlisted pairs = %d, want 25", n)
 	}
 }
 
 func TestNextUnknownEvent(t *testing.T) {
 	if _, err := Next(StateHeld, Event(99), Facts{}); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestNextRejectsZeroExpiresAtWhereItDecides(t *testing.T) {
+	exp := t0.Add(HoldTTL)
+	for _, tc := range []struct {
+		name string
+		ev   Event
+		f    Facts
+	}{
+		{"completed", EvPaymentCompleted, Facts{CompletedAt: exp}},
+		{"expire", EvExpire, Facts{Now: exp.Add(ExpiryGrace)}},
+	} {
+		if d, err := Next(StateHeld, tc.ev, tc.f); !errors.Is(err, ErrInvalidTransition) {
+			t.Errorf("%s with zero ExpiresAt = %+v, %v; want ErrInvalidTransition", tc.name, d, err)
+		}
 	}
 }
