@@ -1,0 +1,84 @@
+CREATE TABLE IF NOT EXISTS organizers (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id_hash TEXT PRIMARY KEY,
+    organizer_id TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    last_seen_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS events (
+    id TEXT PRIMARY KEY,
+    organizer_id TEXT NOT NULL,
+    title_ja TEXT NOT NULL,
+    title_en TEXT NOT NULL,
+    starts_at BIGINT NOT NULL,
+    ends_at BIGINT NOT NULL,
+    capacity INTEGER NOT NULL,
+    price BIGINT NOT NULL,
+    sale_starts_at BIGINT NOT NULL,
+    next_ticket_number INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS purchases (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    lang TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    amount BIGINT NOT NULL,
+    state TEXT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    payment_id TEXT,
+    checkout_url TEXT,
+    ticket_number_from INTEGER,
+    updated_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS purchases_state_expires_at ON purchases (state, expires_at);
+
+CREATE INDEX IF NOT EXISTS purchases_event_email_state ON purchases (event_id, email, state);
+
+CREATE TABLE IF NOT EXISTS event_sales (
+    event_id TEXT PRIMARY KEY,
+    held INTEGER NOT NULL,
+    sold INTEGER NOT NULL,
+    remaining INTEGER NOT NULL,
+    refunds INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS orphan_refunds (
+    payment_id TEXT PRIMARY KEY,
+    purchase_id TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    state TEXT NOT NULL,
+    updated_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mail_outbox (
+    id INTEGER PRIMARY KEY,
+    purchase_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    lang TEXT NOT NULL,
+    sent_at BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS billing_logs (
+    purchase_id TEXT NOT NULL,
+    payment_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS access_logs (
+    method TEXT NOT NULL,
+    path TEXT NOT NULL,
+    status INTEGER NOT NULL,
+    duration_ms BIGINT NOT NULL,
+    at BIGINT NOT NULL
+);
