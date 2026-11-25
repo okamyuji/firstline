@@ -2,8 +2,10 @@ package sqlite_test
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -130,14 +132,88 @@ func TestCommittedRowVisibleToRead(t *testing.T) {
 	}
 }
 
-func TestSchemaTables(t *testing.T) {
-	s := open(t)
-	var n int
-	if err := s.Read.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_master WHERE type='table'").Scan(&n); err != nil {
-		t.Fatal(err)
+// SQLite accepts any value in any column, so a wrong declared type or a
+// missing constraint shows only in the schema pragmas. A TEXT PRIMARY KEY
+// reports notnull 0 in SQLite, so "pk" columns carry no "notnull".
+var wantSchema = map[string]struct{ cols, indexes []string }{
+	"organizers": {
+		[]string{"id TEXT pk", "email TEXT notnull", "password_hash TEXT notnull"},
+		[]string{"sqlite_autoindex_organizers_1(id) unique pk", "sqlite_autoindex_organizers_2(email) unique u"},
+	},
+	"sessions": {
+		[]string{"id_hash TEXT pk", "organizer_id TEXT notnull", "created_at BIGINT notnull", "last_seen_at BIGINT notnull"},
+		[]string{"sqlite_autoindex_sessions_1(id_hash) unique pk"},
+	},
+	"events": {
+		[]string{"id TEXT pk", "organizer_id TEXT notnull", "title_ja TEXT notnull", "title_en TEXT notnull",
+			"starts_at BIGINT notnull", "ends_at BIGINT notnull", "capacity INTEGER notnull", "price BIGINT notnull",
+			"sale_starts_at BIGINT notnull", "next_ticket_number INTEGER notnull"},
+		[]string{"sqlite_autoindex_events_1(id) unique pk"},
+	},
+	"purchases": {
+		[]string{"id TEXT pk", "event_id TEXT notnull", "email TEXT notnull", "lang TEXT notnull",
+			"quantity INTEGER notnull", "amount BIGINT notnull", "state TEXT notnull", "expires_at BIGINT notnull",
+			"payment_id TEXT", "checkout_url TEXT", "ticket_number_from INTEGER", "updated_at BIGINT notnull"},
+		[]string{"purchases_event_email_state(event_id,email,state) c", "purchases_state_expires_at(state,expires_at) c",
+			"sqlite_autoindex_purchases_1(id) unique pk"},
+	},
+	"event_sales": {
+		[]string{"event_id TEXT pk", "held INTEGER notnull", "sold INTEGER notnull", "remaining INTEGER notnull", "refunds INTEGER notnull"},
+		[]string{"sqlite_autoindex_event_sales_1(event_id) unique pk"},
+	},
+	"orphan_refunds": {
+		[]string{"payment_id TEXT pk", "purchase_id TEXT notnull", "amount BIGINT notnull", "state TEXT notnull", "updated_at BIGINT notnull"},
+		[]string{"sqlite_autoindex_orphan_refunds_1(payment_id) unique pk"},
+	},
+	"mail_outbox": {
+		[]string{"id INTEGER pk", "purchase_id TEXT notnull", "kind TEXT notnull", "lang TEXT notnull", "sent_at BIGINT"},
+		nil,
+	},
+	"billing_logs": {
+		[]string{"purchase_id TEXT notnull", "payment_id TEXT notnull", "kind TEXT notnull", "amount BIGINT notnull", "at BIGINT notnull"},
+		nil,
+	},
+	"access_logs": {
+		[]string{"method TEXT notnull", "path TEXT notnull", "status INTEGER notnull", "duration_ms BIGINT notnull", "at BIGINT notnull"},
+		nil,
+	},
+}
+
+func strs(t *testing.T, s *store.Store, query string) []string {
+	t.Helper()
+	var out []string
+	if err := s.Read.NewRaw(query).Scan(t.Context(), &out); err != nil {
+		t.Fatalf("%s: %v", query, err)
 	}
-	if n != 9 {
-		t.Fatalf("tables = %d", n)
+	return out
+}
+
+func TestSchema(t *testing.T) {
+	s := open(t)
+	tables := strs(t, s, "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+	if want := slices.Sorted(maps.Keys(wantSchema)); !slices.Equal(tables, want) {
+		t.Fatalf("tables = %v, want %v", tables, want)
+	}
+	for table, want := range wantSchema {
+		cols := strs(t, s, "SELECT name || ' ' || type || iif(\"notnull\", ' notnull', '') || iif(pk, ' pk', '') FROM pragma_table_info('"+table+"') ORDER BY cid")
+		if !slices.Equal(cols, want.cols) {
+			t.Errorf("%s columns = %q, want %q", table, cols, want.cols)
+		}
+		idx := strs(t, s, "SELECT l.name || '(' || (SELECT group_concat(name, ',') FROM (SELECT name FROM pragma_index_info(l.name) ORDER BY seqno)) || ')'"+
+			" || iif(l.\"unique\", ' unique', '') || ' ' || l.origin FROM pragma_index_list('"+table+"') l ORDER BY l.name")
+		if !slices.Equal(idx, want.indexes) {
+			t.Errorf("%s indexes = %q, want %q", table, idx, want.indexes)
+		}
+	}
+}
+
+func TestPoolSizes(t *testing.T) {
+	s := open(t)
+	if got := s.Write.Stats().MaxOpenConnections; got != 1 {
+		t.Errorf("write pool = %d, want 1", got)
+	}
+	if got := s.Read.Stats().MaxOpenConnections; got != 8 {
+		t.Errorf("read pool = %d, want 8", got)
 	}
 }
 

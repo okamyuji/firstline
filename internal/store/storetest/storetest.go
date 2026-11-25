@@ -170,6 +170,27 @@ func testNames(t *testing.T, e *env) {
 	slices.Sort(got)
 	slices.Sort(want)
 	eqSlice(t, "sql names", got, want)
+
+	// The driver runs every statement of a multi-statement string, so a stray ";" would run hidden SQL.
+	for _, n := range Names {
+		b, err := fs.ReadFile(e.s.SQL, "sql/"+n+".sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if body := strings.TrimSuffix(strings.TrimSpace(withoutComments(string(b))), ";"); strings.Contains(body, ";") {
+			t.Errorf("%s.sql holds more than one statement", n)
+		}
+	}
+}
+
+func withoutComments(q string) string {
+	var b strings.Builder
+	for line := range strings.Lines(q) {
+		if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+			b.WriteString(line)
+		}
+	}
+	return b.String()
 }
 
 func testOrganizer(t *testing.T, e *env) {
@@ -218,32 +239,37 @@ type event struct {
 }
 
 func testEvents(t *testing.T, e *env) {
+	const now = int64(1000)
+	// Events with the same starts_at go in neither id order nor its reverse, so only the id tie-break sorts them.
 	e.seedEvent("late", org, start+500, 7)
-	e.seedEvent("early", org, start, 10)
-	e.seedEvent("past", org, 100, 3)
+	e.seedEvent("early2", org, start, 9)
 	e.seedEvent("other", "org2", start, 4)
+	e.seedEvent("early", org, start, 10)
+	e.seedEvent("early3", org, start, 8)
+	e.seedEvent("past", org, 100, 3)
+	e.seedEvent("at-now", org, now, 5)
 
 	var ev event
 	e.sel(&ev, "get_event", "early")
 	eq(t, "get_event", ev, event{"early", org, "題名 early", "Title early", start, start + 1000, 10, price, saleAt, nextNum})
 	eq(t, "get_sales", e.sales("early"), salesRow{"early", 0, 0, 10, 0})
 
-	var pub []listRow
-	e.sel(&pub, "list_public_events", int64(1000))
-	got := make([]string, len(pub))
-	for i, r := range pub {
-		got[i] = r.ID
+	ids := func(rows []listRow) []string {
+		out := make([]string, len(rows))
+		for i, r := range rows {
+			out[i] = r.ID
+		}
+		return out
 	}
-	eqSlice(t, "public order (starts_at, id; past excluded)", got, []string{"early", "other", "late"})
+	var pub []listRow
+	e.sel(&pub, "list_public_events", now)
+	eqSlice(t, "public order (starts_at, id; started at or before now excluded)", ids(pub),
+		[]string{"early", "early2", "early3", "other", "late"})
 	eq(t, "public row", pub[0], listRow{"early", "題名 early", "Title early", start, start + 1000, price, saleAt, 10})
 
 	var mine []listRow
 	e.sel(&mine, "list_events_by_organizer", org)
-	got = got[:0]
-	for _, r := range mine {
-		got = append(got, r.ID)
-	}
-	eqSlice(t, "organizer events", got, []string{"past", "early", "late"})
+	eqSlice(t, "organizer events", ids(mine), []string{"past", "at-now", "early", "early2", "early3", "late"})
 	eq(t, "organizer remaining", mine[0].Remaining, 3)
 }
 
@@ -302,7 +328,9 @@ func testRecordPayment(t *testing.T, e *env) {
 
 func testSeatCounters(t *testing.T, e *env) {
 	e.seedEvent(evt, org, start, 10)
+	e.seedEvent("evt2", org, start, 10)
 	e.exec("hold_seats", 5, 5, evt, 5)
+	e.exec("hold_seats", 6, 6, "evt2", 6)
 	eq(t, "sell 2", e.exec("sell_seats", 2, 2, evt), 1)
 	eq(t, "after sell", e.sales(evt), salesRow{evt, 3, 2, 5, 0})
 	eq(t, "release 3", e.exec("release_seats", 3, 3, evt), 1)
@@ -310,10 +338,14 @@ func testSeatCounters(t *testing.T, e *env) {
 	eq(t, "count refund", e.exec("count_refund", evt), 1)
 	e.exec("count_refund", evt)
 	eq(t, "after two refunds", e.sales(evt), salesRow{evt, 0, 2, 8, 2})
+	eq(t, "other event untouched", e.sales("evt2"), salesRow{"evt2", 6, 0, 4, 0})
 }
 
 func testTickets(t *testing.T, e *env) {
+	// evt sits between two other events so a query that ignores the id picks another row first in either scan order.
+	e.seedEvent("evt0", org, start, 10)
 	e.seedEvent(evt, org, start, 10)
+	e.seedEvent("evt2", org, start, 10)
 	e.seedPurchase("p1", evt, "a@example.com", 3, 600)
 	e.seedPurchase("p2", evt, "b@example.com", 2, 600)
 	base := func(id string, qty int) int {
@@ -332,6 +364,10 @@ func testTickets(t *testing.T, e *env) {
 	var ev event
 	e.sel(&ev, "get_event", evt)
 	eq(t, "next_ticket_number", ev.NextTicket, 6)
+	for _, id := range []string{"evt0", "evt2"} {
+		e.sel(&ev, "get_event", id)
+		eq(t, id+" next_ticket_number", ev.NextTicket, nextNum)
+	}
 }
 
 func testBilling(t *testing.T, e *env) {
@@ -361,17 +397,18 @@ type orphanRow struct {
 func testOrphans(t *testing.T, e *env) {
 	eq(t, "first insert", e.exec("insert_orphan", "payB", "pur1", 5000, int64(60)), 1)
 	eq(t, "duplicate insert", e.exec("insert_orphan", "payB", "pur-other", 9999, int64(61)), 0)
+	e.exec("insert_orphan", "payC", "pur3", 4000, int64(62))
 	e.exec("insert_orphan", "payA", "pur2", 3000, int64(62))
 
 	var rows []orphanRow
 	e.sel(&rows, "list_refunding_orphans")
-	eqSlice(t, "refunding orphans", rows, []orphanRow{{"payA", "pur2", 3000}, {"payB", "pur1", 5000}})
+	eqSlice(t, "refunding orphans", rows, []orphanRow{{"payA", "pur2", 3000}, {"payB", "pur1", 5000}, {"payC", "pur3", 4000}})
 
 	eq(t, "mark refunded", e.exec("set_orphan_refunded", int64(70), "payA"), 1)
 	eq(t, "mark refunded twice", e.exec("set_orphan_refunded", int64(71), "payA"), 0)
 	rows = nil
 	e.sel(&rows, "list_refunding_orphans")
-	eqSlice(t, "orphans left", rows, []orphanRow{{"payB", "pur1", 5000}})
+	eqSlice(t, "orphans left", rows, []orphanRow{{"payB", "pur1", 5000}, {"payC", "pur3", 4000}})
 }
 
 func testDue(t *testing.T, e *env) {
@@ -383,13 +420,23 @@ func testDue(t *testing.T, e *env) {
 	e.seedPurchase("bought", evt, "e@example.com", 1, 400)
 	e.exec("set_state", "purchased", int64(11), "bought", "held")
 	e.seedPurchase("refund2", evt, "f@example.com", 1, 400)
+	e.seedPurchase("refund3", evt, "i@example.com", 1, 400)
 	e.seedPurchase("refund1", evt, "g@example.com", 1, 400)
 	e.seedPurchase("nopay", evt, "h@example.com", 1, 400)
-	for _, id := range []string{"refund2", "refund1", "nopay"} {
+	for _, id := range []string{"refund2", "refund3", "refund1", "nopay"} {
 		e.exec("set_state", "refunding", int64(11), id, "held")
 	}
 	e.exec("record_payment", "pay-r2", "", "refund2")
+	e.exec("record_payment", "pay-r3", "", "refund3")
 	e.exec("record_payment", "pay-r1", "", "refund1")
+	// Purchases in every other state carry a payment and an expired deadline too; neither list may take them.
+	for _, st := range []string{"released", "expired", "refunded"} {
+		e.seedPurchase(st, evt, st+"@example.com", 1, 400)
+		e.exec("set_state", st, int64(11), st, "held")
+	}
+	for _, id := range []string{"bought", "due-a", "released", "expired", "refunded"} {
+		e.exec("record_payment", "pay-"+id, "", id)
+	}
 
 	type due struct {
 		ID        string `bun:"id"`
@@ -409,17 +456,20 @@ func testDue(t *testing.T, e *env) {
 	}
 	var ref []refunding
 	e.sel(&ref, "list_refunding")
-	eqSlice(t, "refunding purchases with a payment", ref, []refunding{{"refund1", "pay-r1", price}, {"refund2", "pay-r2", price}})
+	eqSlice(t, "refunding purchases with a payment", ref, []refunding{{"refund1", "pay-r1", price}, {"refund2", "pay-r2", price}, {"refund3", "pay-r3", price}})
 }
 
 func testMail(t *testing.T, e *env) {
 	e.seedEvent(evt, org, start, 10)
+	e.seedEvent("evt2", org, start+1, 10)
 	e.seedPurchase("p-z", evt, "z@example.com", 2, 600)
 	e.seedPurchase("p-a", evt, "a@example.com", 1, 700)
+	e.seedPurchase("p-o", "evt2", "o@example.com", 1, 800)
 	e.exec("record_payment", "pay-a", "https://pay.example/a", "p-a")
 	e.exec("insert_mail", "p-z", "held", "en")
 	e.exec("insert_mail", "p-a", "held", "ja")
 	e.exec("insert_mail", "p-z", "purchased", "en")
+	e.exec("insert_mail", "p-o", "held", "ja")
 
 	type mailRow struct {
 		ID               int64          `bun:"id"`
@@ -440,13 +490,14 @@ func testMail(t *testing.T, e *env) {
 	}
 	var rows []mailRow
 	e.sel(&rows, "list_unsent_mail")
-	if len(rows) != 3 {
-		t.Fatalf("unsent mail = %d rows, want 3", len(rows))
+	if len(rows) != 4 {
+		t.Fatalf("unsent mail = %d rows, want 4", len(rows))
 	}
-	ids := []int64{rows[0].ID, rows[1].ID, rows[2].ID}
-	if !slices.IsSorted(ids) || ids[0] == ids[1] || ids[1] == ids[2] {
+	ids := []int64{rows[0].ID, rows[1].ID, rows[2].ID, rows[3].ID}
+	if !slices.IsSorted(ids) || len(slices.Compact(slices.Clone(ids))) != len(ids) {
 		t.Errorf("mail ids = %v, want strictly ascending", ids)
 	}
+	eq(t, "other event's mail", [3]any{rows[3].PurchaseID, rows[3].TitleJA, rows[3].StartsAt}, [3]any{"p-o", "題名 evt2", start + 1})
 	eq(t, "first mail", rows[0], mailRow{
 		ID: ids[0], PurchaseID: "p-z", Kind: "held", Lang: "en", State: "held", Email: "z@example.com",
 		Quantity: 2, Amount: 2 * price, ExpiresAt: 600, TitleJA: "題名 evt1", TitleEN: "Title evt1", StartsAt: start,
@@ -462,8 +513,8 @@ func testMail(t *testing.T, e *env) {
 	eq(t, "mark sent", e.exec("mark_mail_sent", int64(80), ids[1]), 1)
 	rows = nil
 	e.sel(&rows, "list_unsent_mail")
-	if len(rows) != 2 || rows[0].ID != ids[0] || rows[1].ID != ids[2] {
-		t.Errorf("unsent after mark = %+v, want ids %d and %d", rows, ids[0], ids[2])
+	if len(rows) != 3 || rows[0].ID != ids[0] || rows[1].ID != ids[2] || rows[2].ID != ids[3] {
+		t.Errorf("unsent after mark = %+v, want ids %d, %d and %d", rows, ids[0], ids[2], ids[3])
 	}
 }
 
@@ -485,6 +536,8 @@ func testInventory(t *testing.T, e *env) {
 	}
 	var rows []count
 	e.sel(&rows, "inventory_counts")
+	// The rebuild adds each event on its own, so the statement has no order to keep.
+	slices.SortFunc(rows, func(a, b count) int { return strings.Compare(a.EventID, b.EventID) })
 	eqSlice(t, "inventory", rows, []count{{"e-a", 6, 0}, {"e-b", 10, 5}})
 }
 
@@ -497,6 +550,7 @@ type sessionRow struct {
 
 func testSessions(t *testing.T, e *env) {
 	e.exec("insert_session", "h1", org, int64(100), int64(100))
+	e.exec("insert_session", "h2", org, int64(100), int64(100))
 	var s sessionRow
 	e.sel(&s, "get_session", "h1")
 	eq(t, "session", s, sessionRow{"h1", org, 100, 100})
@@ -505,6 +559,8 @@ func testSessions(t *testing.T, e *env) {
 	e.sel(&s, "get_session", "h1")
 	eq(t, "last_seen_at", s.LastSeenAt, 150)
 	eq(t, "created_at kept", s.CreatedAt, 100)
+	e.sel(&s, "get_session", "h2")
+	eq(t, "other session untouched", s.LastSeenAt, 100)
 
 	e.exec("insert_session", "old", org, int64(10), int64(900))
 	e.exec("insert_session", "idle", org, int64(900), int64(20))

@@ -20,6 +20,11 @@ func TestSQLite(t *testing.T) {
 		if err := s.Migrate(t.Context()); err != nil {
 			t.Fatal(err)
 		}
+		// SQLite scans in rowid order, which hides a missing ORDER BY; reversing unordered output exposes it.
+		// The write pool keeps its single connection, so the pragma stays set.
+		if _, err := s.Write.ExecContext(t.Context(), "PRAGMA reverse_unordered_selects = ON"); err != nil {
+			t.Fatal(err)
+		}
 		return s
 	})
 }
