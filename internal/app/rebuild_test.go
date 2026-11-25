@@ -63,12 +63,22 @@ func TestRebuildInventory(t *testing.T) {
 	}
 }
 
-func TestRebuildInventoryReadError(t *testing.T) {
+// The design rebuilds from WriteDB, so only the write pool may be read.
+func TestRebuildInventoryReadsWriteDB(t *testing.T) {
 	s := openStore(t)
+	seed(t, s, "e1", 4)
 	_ = s.Read.Close()
-	svc := app.New(app.Deps{Store: s, Inventory: inventory.NewMemory()})
-	if err := svc.RebuildInventory(context.Background()); err == nil {
-		t.Fatal("want error")
+	inv := inventory.NewMemory()
+	if err := app.New(app.Deps{Store: s, Inventory: inv}).RebuildInventory(t.Context()); err != nil {
+		t.Fatalf("rebuild with ReadDB closed: %v", err)
+	}
+	if got, err := inv.Remaining(t.Context(), "e1"); err != nil || got != 4 {
+		t.Errorf("e1 remaining = %d, %v; want 4", got, err)
+	}
+
+	_ = s.Write.Close()
+	if err := app.New(app.Deps{Store: s, Inventory: inventory.NewMemory()}).RebuildInventory(t.Context()); err == nil {
+		t.Fatal("rebuild with WriteDB closed: want error")
 	}
 }
 

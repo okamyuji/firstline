@@ -11,10 +11,10 @@ type inventoryCount struct {
 	Active   int    `bun:"active"`
 }
 
-// RebuildInventory reloads the in-memory counts from the database at startup.
+// RebuildInventory reloads the in-memory counts from WriteDB at startup.
 func (s *Service) RebuildInventory(ctx context.Context) error {
 	var rows []inventoryCount
-	if err := s.Store.Select(ctx, s.Store.Read, &rows, "inventory_counts"); err != nil {
+	if err := s.Store.Select(ctx, s.Store.Write, &rows, "inventory_counts"); err != nil {
 		return fmt.Errorf("load inventory counts: %w", err)
 	}
 	for _, r := range rows {

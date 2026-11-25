@@ -100,22 +100,31 @@ func TestMemoryErrors(t *testing.T) {
 	}
 }
 
+// Reserve(2) against 11 seats leaves one seat that no request fits, so a
+// check and a decrement that are not atomic together show as an oversell. A
+// closed channel releases all goroutines at once to make that interleaving likely.
 func TestMemoryConcurrentReserve(t *testing.T) {
 	ctx := t.Context()
-	m := inventory.NewMemory()
-	_ = m.Add(ctx, "e", 10)
-	var ok atomic.Int32
-	var wg sync.WaitGroup
-	for range 200 {
-		wg.Go(func() {
-			if m.Reserve(ctx, "e", 1) == nil {
-				ok.Add(1)
-			}
-		})
-	}
-	wg.Wait()
-	if ok.Load() != 10 {
-		t.Fatalf("successes = %d, want 10", ok.Load())
+	for run := range 5000 {
+		m := inventory.NewMemory()
+		_ = m.Add(ctx, "e", 11)
+		var ok atomic.Int32
+		var wg sync.WaitGroup
+		begin := make(chan struct{})
+		for range 64 {
+			wg.Go(func() {
+				<-begin
+				if m.Reserve(ctx, "e", 2) == nil {
+					ok.Add(1)
+				}
+			})
+		}
+		close(begin)
+		wg.Wait()
+		left, _ := m.Remaining(ctx, "e")
+		if ok.Load() != 5 || left != 1 {
+			t.Fatalf("run %d: successes = %d, remaining = %d; want 5 and 1", run, ok.Load(), left)
+		}
 	}
 }
 
