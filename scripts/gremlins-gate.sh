@@ -19,7 +19,7 @@ in_const() {
 # added <base> <file> <line> succeeds when the diff from base adds the line.
 added() {
 	git diff -U0 --merge-base "$1" -- "$2" | awk -v n="$3" '
-	/^@@/ { split($3, a, ","); s = substr(a[1], 2); c = (a[2] == "" ? 1 : a[2]); if (n >= s && n < s + c) f = 1 }
+	/^@@/ { split($3, a, ","); s = substr(a[1], 2) + 0; c = (a[2] == "" ? 1 : a[2] + 0); if (n + 0 >= s && n + 0 < s + c) f = 1 }
 	END { exit !f }
 	'
 }
