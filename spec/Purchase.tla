@@ -189,6 +189,8 @@ NoOversell == Seats({"held", "purchased"}) <= Capacity
 
 ReleaseOnce == \A b \in Buyers : giveBacks[b] <= 1
 
+SeatsMatch == remaining = Capacity - Seats({"held", "purchased"})
+
 PaidEndsWell ==
     /\ \A b \in Buyers : paid[b] ~> st[b] \in {"purchased", "refunded"}
     /\ orphan = "paid" ~> orphan = "refunded"
