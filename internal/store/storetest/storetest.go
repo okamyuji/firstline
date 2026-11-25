@@ -293,6 +293,13 @@ func testPurchase(t *testing.T, e *env) {
 	var n int
 	e.sel(&n, "count_active_holds", evt, "a@example.com")
 	eq(t, "active holds (same event and email, held only)", n, 1)
+
+	// The comparison is exact in every dialect, so callers store and query the email lower-cased.
+	e.seedPurchase("p5", evt, "A@Example.com", 1, 600)
+	e.sel(&n, "count_active_holds", evt, "a@example.com")
+	eq(t, "active holds ignore a differently cased email", n, 1)
+	e.sel(&n, "count_active_holds", evt, "A@Example.com")
+	eq(t, "active holds match the exact email", n, 1)
 }
 
 func testHoldSeats(t *testing.T, e *env) {
