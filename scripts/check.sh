@@ -34,7 +34,7 @@ else
 
 	echo "== gremlins"
 	# gremlins exits 0 even when mutants survive, so read the Lived count.
-	out=$(gremlins unleash --diff "${BASE:-HEAD~1}")
+	out=$(gremlins unleash --timeout-coefficient 20 --diff "${BASE:-HEAD~1}")
 	echo "$out"
 	lived=$(echo "$out" | sed -n 's/.*Lived: \([0-9][0-9]*\).*/\1/p' | tail -n 1)
 	if [ "${lived:-0}" -gt 0 ]; then
