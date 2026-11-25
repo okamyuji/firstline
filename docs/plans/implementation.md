@@ -191,8 +191,11 @@ type Options struct {
 	IsIOError func(error) bool
 	OnFatal   func(error)   // 本番ではos.Exit(1)
 	Now       func() time.Time
+	After     func(time.Duration) <-chan time.Time
+	OnSyncResult func(at time.Time, wait time.Duration) // waitはDoを呼んでから結果まで
+	OnAsyncError func(error)                            // 本番ではErrorReporter.Report
 }
-func New(db *bun.DB, opt Options) *Writer
+func New(db *bun.DB, opt Options) (*Writer, error)     // 関数のnilと0以下の値をエラーにする
 func (w *Writer) Run()                                 // Stopまでコミットを続ける
 func (w *Writer) Do(ctx context.Context, a Apply) error // 同期項目
 func (w *Writer) Send(a Apply)                         // 非同期項目。満杯なら捨てて数える
@@ -213,7 +216,7 @@ var ErrShuttingDown error
   - `TestSendDropsWhenFull`は満杯で`Send`が捨て、`Stats().DroppedTotal`が増えること
   - `TestStopDrainsAndRejects`は`Stop`の前に送った項目がすべてコミットされ、`Stop`の後の`Do`が`ErrShuttingDown`を返すこと。チャネルは閉じないので`Send`もpanicしないこと
 - [ ] `go test ./internal/store/writer`を実行し、未定義で失敗することを確かめる
-- [ ] 実装する。仕様のグループコミットの規則1〜4と、失敗した項目を1件ずつ入れ直す処理を書く
+- [ ] 実装する。仕様のグループコミットの規則1〜4と、項目ごとのセーブポイントで失敗した項目だけを巻き戻す処理を書く
 - [ ] `go test -race -count=1 ./internal/store/writer`が通ることと、変異がすべて殺されることを確かめる
 - [ ] コミットする（`feat(store): add group-commit writer`）
 
