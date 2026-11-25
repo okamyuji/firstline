@@ -9,17 +9,6 @@ for tool in gofmt staticcheck golangci-lint gremlins gocyclo java; do
 	}
 done
 
-# in_const <file> <line> succeeds when the line belongs to a const declaration.
-# gofmt fixes the shape: a block opens with "const (" and closes with ")" at the same indent.
-in_const() {
-	awk -v n="$2" '
-	/^[ \t]*const[ \t]*\($/ { blk = 1; match($0, /^[ \t]*/); ind = substr($0, 1, RLENGTH) }
-	NR == n { if (blk || /^[ \t]*const[ \t]/) found = 1; exit }
-	blk && $0 == ind ")" { blk = 0 }
-	END { exit !found }
-	' "$1"
-}
-
 echo "== gofmt"
 unformatted=$(gofmt -l .)
 if [ -n "$unformatted" ]; then
@@ -46,53 +35,40 @@ golangci-lint run
 echo "== go build"
 go build ./...
 
-echo "== go test -race"
-go test -race -count=1 -coverprofile=cover.out ./...
-total=$(go tool cover -func=cover.out | awk '/^total:/ { sub(/%/, "", $NF); print $NF }')
-echo "total coverage: ${total}%"
-awk -v t="$total" 'BEGIN { exit !(t >= 80) }' || {
-	echo "coverage ${total}% is below 80%" >&2
-	exit 1
+# cover_gate <profile> fails when the total statement coverage is below 80%.
+cover_gate() {
+	local total
+	total=$(go tool cover -func="$1" | awk '/^total:/ { sub(/%/, "", $NF); print $NF }')
+	echo "total coverage: ${total}%"
+	awk -v t="$total" 'BEGIN { exit !(t >= 80) }' || {
+		echo "coverage ${total}% is below 80%" >&2
+		return 1
+	}
 }
 
-# gremlins_gate <args...> runs gremlins in the current directory and fails on
-# lived mutants, a missing summary, or uncovered mutants outside const declarations.
-gremlins_gate() {
-	local out lived uncovered
-	# gremlins exits 0 even when mutants survive, so read the summary.
-	out=$(gremlins unleash --timeout-coefficient 20 "$@")
-	echo "$out"
-	lived=$(echo "$out" | sed -n 's/.*Lived: \([0-9][0-9]*\).*/\1/p' | tail -n 1)
-	if [ -z "$lived" ]; then
-		echo "gremlins: summary line with Lived not found" >&2
-		return 1
-	fi
-	if [ "$lived" -gt 0 ]; then
-		echo "gremlins: ${lived} mutants lived" >&2
-		return 1
-	fi
-	# TIMED OUT counts as killed: the mutant broke a loop or a wait and the tests hung.
-	# Coverage cannot reach a const expression, so only uncovered mutants outside const declarations fail.
-	uncovered=$(echo "$out" | sed -n 's/^ *NOT COVERED [A-Z_]* at \(.*\):\([0-9][0-9]*\):[0-9][0-9]*$/\1 \2/p' |
-		while read -r file line; do in_const "$file" "$line" || echo "$file:$line"; done | sort -u)
-	if [ -n "$uncovered" ]; then
-		echo "gremlins: mutants not covered by any test:" >&2
-		echo "$uncovered" >&2
-		return 1
-	fi
-}
+echo "== go test -race"
+go test -race -count=1 -coverprofile=cover.out ./...
+cover_gate cover.out
 
 echo "== gremlins"
 base=${BASE:-$(git merge-base HEAD main)}
+# A push that creates a branch or rewrites history gives an all-zero or unknown
+# before SHA; mutate everything since the root commit then.
+if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+	echo "gremlins: base ${base} is not a commit; using the root commit" >&2
+	base=$(git rev-list --max-parents=0 HEAD | tail -n 1)
+fi
 # tools/doclint is its own module: root tests cannot cover it, and --diff inside it
 # matches no file, so it gets a full run in the doclint step instead.
-gremlins_gate --diff "$base" -E '^tools/'
+scripts/gremlins-gate.sh --diff "$base" -E '^tools/'
 
 echo "== crap"
 scripts/crap.sh cover.out
 
 echo "== doclint"
-(cd tools/doclint && go vet ./... && golangci-lint run && go test -count=1 ./... && gremlins_gate && go run . ../../docs)
+(cd tools/doclint && go vet ./... && golangci-lint run &&
+	go test -race -count=1 -coverprofile=cover.out ./... && cover_gate cover.out &&
+	../../scripts/crap.sh cover.out && ../../scripts/gremlins-gate.sh && go run . ../../docs)
 
 echo "== tlc"
 bash scripts/tlc.sh
