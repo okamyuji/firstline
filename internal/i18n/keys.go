@@ -49,7 +49,6 @@ const (
 	AdminLoginHeading = "admin.login.heading"
 	AdminPassword     = "admin.login.password"
 	AdminLoginSubmit  = "admin.login.submit"
-	AdminLoginFailed  = "admin.login.failed"
 	AdminEventsHead   = "admin.events.heading"
 	AdminNewEvent     = "admin.events.new"
 	AdminCreateHead   = "admin.create.heading"
@@ -81,5 +80,10 @@ const (
 	ErrDuplicateHold      = "error.duplicate_hold"
 	ErrNotFound           = "error.not_found"
 	ErrPaymentUnavailable = "error.payment_unavailable"
+	ErrBadInput           = "error.bad_input"
+	ErrDuplicateOrganizer = "error.duplicate_organizer"
+	ErrBadCredentials     = "error.bad_credentials"
+	ErrTooManyAttempts    = "error.too_many_attempts"
+	ErrNoSession          = "error.no_session"
 	ErrInternal           = "error.internal"
 )

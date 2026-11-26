@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -131,30 +132,83 @@ func TestNegotiate(t *testing.T) {
 	}
 }
 
-func TestErrorKey(t *testing.T) {
-	want := map[error]string{
-		domain.ErrSoldOut:            ErrSoldOut,
-		domain.ErrInvalidTransition:  ErrInvalidTransition,
-		domain.ErrNotOnSale:          ErrNotOnSale,
-		domain.ErrBadQuantity:        ErrBadQuantity,
-		domain.ErrDuplicateHold:      ErrDuplicateHold,
-		domain.ErrNotFound:           ErrNotFound,
-		domain.ErrPaymentUnavailable: ErrPaymentUnavailable,
+// domainErrorMessages lists the message of every exported Err variable in
+// internal/domain, read from source so a new domain error cannot be missed.
+func domainErrorMessages(t *testing.T) []string {
+	t.Helper()
+	files, err := filepath.Glob("../domain/*.go")
+	if err != nil {
+		t.Fatal(err)
 	}
-	seen := map[string]bool{}
-	for err, key := range want {
-		if got := ErrorKey(fmt.Errorf("wrapped: %w", err)); got != key {
-			t.Errorf("ErrorKey(%v) = %q, want %q", err, got, key)
+	var msgs []string
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
 		}
-		seen[key] = true
+		f, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, s := range gd.Specs {
+				vs := s.(*ast.ValueSpec)
+				for i, n := range vs.Names {
+					if !n.IsExported() || !strings.HasPrefix(n.Name, "Err") {
+						continue
+					}
+					call, ok := vs.Values[i].(*ast.CallExpr)
+					if !ok || len(call.Args) != 1 {
+						t.Fatalf("%s is not errors.New(literal)", n.Name)
+					}
+					msg, err := strconv.Unquote(call.Args[0].(*ast.BasicLit).Value)
+					if err != nil {
+						t.Fatal(err)
+					}
+					msgs = append(msgs, msg)
+				}
+			}
+		}
 	}
-	if len(seen) != len(want) {
-		t.Error("domain errors share keys")
+	return msgs
+}
+
+func TestErrorKeyGivesEveryDomainErrorItsOwnKey(t *testing.T) {
+	msgs := domainErrorMessages(t)
+	if !slices.Contains(msgs, domain.ErrNoSession.Error()) {
+		t.Fatalf("parsed domain errors %q miss ErrNoSession; the parser is broken", msgs)
+	}
+	seen := map[string]string{}
+	for _, msg := range msgs {
+		i := slices.IndexFunc(errorKeys, func(e struct {
+			err error
+			key string
+		}) bool {
+			return e.err.Error() == msg
+		})
+		if i < 0 {
+			t.Errorf("domain error %q has no message key", msg)
+			continue
+		}
+		key := ErrorKey(fmt.Errorf("wrapped: %w", errorKeys[i].err))
+		if key != errorKeys[i].key || key == ErrInternal {
+			t.Errorf("ErrorKey(%q) = %q, want %q", msg, key, errorKeys[i].key)
+		}
+		if other, dup := seen[key]; dup {
+			t.Errorf("%q and %q share key %q", other, msg, key)
+		}
+		seen[key] = msg
+		if jaStrings[key] == "" || enStrings[key] == "" {
+			t.Errorf("key %q of %q lacks a ja or en string", key, msg)
+		}
+	}
+	if len(errorKeys) != len(msgs) {
+		t.Errorf("%d error keys for %d domain errors", len(errorKeys), len(msgs))
 	}
 	if got := ErrorKey(errors.New("boom")); got != ErrInternal {
 		t.Errorf("generic error key = %q, want %q", got, ErrInternal)
-	}
-	if seen[ErrInternal] {
-		t.Error("generic key must differ from the specific keys")
 	}
 }

@@ -42,7 +42,6 @@ var enStrings = map[string]string{
 	AdminLoginHeading: "Organizer login",
 	AdminPassword:     "Password",
 	AdminLoginSubmit:  "Log in",
-	AdminLoginFailed:  "The email address or password is wrong.",
 	AdminEventsHead:   "Your events",
 	AdminNewEvent:     "Create an event",
 	AdminCreateHead:   "Create an event",
@@ -72,5 +71,10 @@ var enStrings = map[string]string{
 	ErrDuplicateHold:      "This email address already has a purchase on hold.",
 	ErrNotFound:           "Not found.",
 	ErrPaymentUnavailable: "We could not start the payment. Please try again later.",
+	ErrBadInput:           "Some input is invalid. Please check it.",
+	ErrDuplicateOrganizer: "An organizer with this email address already exists.",
+	ErrBadCredentials:     "The email address or password is wrong.",
+	ErrTooManyAttempts:    "Too many failed logins. Please try again in 15 minutes.",
+	ErrNoSession:          "Please log in again.",
 	ErrInternal:           "Something went wrong. Please try again later.",
 }

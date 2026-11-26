@@ -44,7 +44,6 @@ var jaStrings = map[string]string{
 	AdminLoginHeading: "主催者ログイン",
 	AdminPassword:     "パスワード",
 	AdminLoginSubmit:  "ログイン",
-	AdminLoginFailed:  "メールアドレスまたはパスワードが違います。",
 	AdminEventsHead:   "自分のイベント",
 	AdminNewEvent:     "イベントを作る",
 	AdminCreateHead:   "イベントの作成",
@@ -74,5 +73,10 @@ var jaStrings = map[string]string{
 	ErrDuplicateHold:      "このメールアドレスで保留中の購入がすでにあります。",
 	ErrNotFound:           "見つかりませんでした。",
 	ErrPaymentUnavailable: "決済を始められませんでした。しばらくしてからやり直してください。",
+	ErrBadInput:           "入力に誤りがあります。内容を確かめてください。",
+	ErrDuplicateOrganizer: "このメールアドレスの主催者はすでに登録されています。",
+	ErrBadCredentials:     "メールアドレスまたはパスワードが違います。",
+	ErrTooManyAttempts:    "ログインの失敗が続いたため受け付けを止めています。15分後にやり直してください。",
+	ErrNoSession:          "ログインし直してください。",
 	ErrInternal:           "エラーが起きました。しばらくしてからやり直してください。",
 }

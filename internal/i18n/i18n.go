@@ -62,6 +62,11 @@ var errorKeys = []struct {
 	{domain.ErrDuplicateHold, ErrDuplicateHold},
 	{domain.ErrNotFound, ErrNotFound},
 	{domain.ErrPaymentUnavailable, ErrPaymentUnavailable},
+	{domain.ErrBadInput, ErrBadInput},
+	{domain.ErrDuplicateOrganizer, ErrDuplicateOrganizer},
+	{domain.ErrBadCredentials, ErrBadCredentials},
+	{domain.ErrTooManyAttempts, ErrTooManyAttempts},
+	{domain.ErrNoSession, ErrNoSession},
 }
 
 // ErrorKey maps a domain error to its message key; other errors get the generic key.
