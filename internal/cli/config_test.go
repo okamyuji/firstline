@@ -143,9 +143,9 @@ func TestDBTarget(t *testing.T) {
 	}
 }
 
-// The example file is copied to /etc/firstline/env as is, so it must start and
-// hold every default it claims to show.
-func TestEnvExampleLoadsAndShowsTheDefaults(t *testing.T) {
+// The example file is public, so its token key must not start the server; with
+// a real key put in, it must hold every default it claims to show.
+func TestEnvExampleRefusesItsKeyAndShowsTheDefaults(t *testing.T) {
 	b, err := os.ReadFile("../../deploy/firstline.env.example")
 	if err != nil {
 		t.Fatal(err)
@@ -156,9 +156,13 @@ func TestEnvExampleLoadsAndShowsTheDefaults(t *testing.T) {
 			m[k] = v
 		}
 	}
+	if _, err := LoadConfig(func(k string) string { return m[k] }); err == nil || !strings.Contains(err.Error(), "FIRSTLINE_TOKEN_KEY") {
+		t.Fatalf("LoadConfig(example as is) = %v; want a FIRSTLINE_TOKEN_KEY error", err)
+	}
+	m["FIRSTLINE_TOKEN_KEY"] = validKey
 	got, err := LoadConfig(func(k string) string { return m[k] })
 	if err != nil {
-		t.Fatalf("LoadConfig(example) = %v", err)
+		t.Fatalf("LoadConfig(example with a key) = %v", err)
 	}
 	defaults, err := LoadConfig(envOf(nil))
 	if err != nil {

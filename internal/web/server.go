@@ -39,7 +39,7 @@ var templateFS embed.FS
 var staticFS embed.FS
 
 const (
-	csp        = "default-src 'self'; frame-ancestors 'none'"
+	csp        = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 	maxBody    = 16 << 10
 	holdWindow = time.Minute
 	// htmx stops polling when it receives this status.
@@ -136,6 +136,8 @@ func headers(next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("Content-Security-Policy", csp)
 		h.Set("X-Content-Type-Options", "nosniff")
+		// Every listener that serves pages is TLS-only, so browsers may refuse plain HTTP for two years.
+		h.Set("Strict-Transport-Security", "max-age=63072000")
 		// Status and lookup URLs carry the purchase token in the query.
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Content-Language", lang(r))

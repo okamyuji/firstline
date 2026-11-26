@@ -11,6 +11,8 @@ jobs:
     uses: okamyuji/reusable-workflows/.github/workflows/security-scan.yml@v1
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:

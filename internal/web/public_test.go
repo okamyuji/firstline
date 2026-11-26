@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	csp        = "default-src 'self'; frame-ancestors 'none'"
+	csp        = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 	htmxConfig = `<meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false, "selfRequestsOnly": true, "historyRestoreAsHxRequest": false}'>`
 	titleJA    = "春の演奏会"
 	titleEN    = "Spring Concert"
@@ -275,6 +275,9 @@ func TestEveryResponseHasSecurityAndLanguageHeaders(t *testing.T) {
 				}
 				if got := h.Get("Content-Language"); got != lang {
 					t.Errorf("Content-Language = %q, want %q", got, lang)
+				}
+				if got := h.Get("Strict-Transport-Security"); got != "max-age=63072000" {
+					t.Errorf("Strict-Transport-Security = %q", got)
 				}
 				if got := h.Get("X-Content-Type-Options"); got != "nosniff" {
 					t.Errorf("X-Content-Type-Options = %q", got)

@@ -31,6 +31,12 @@ for unit in firstline litestream; do want_line "$deploy/$unit.service" "User=fir
 want_line "$deploy/firstline.service" "EnvironmentFile=/etc/firstline/env"
 want_line "$deploy/litestream.service" "EnvironmentFile=/etc/firstline/litestream.env"
 
+# tmpfiles.d: StandardOutput=append: needs the log directory before the unit starts.
+want_line "$deploy/tmpfiles-firstline.conf" "d /var/lib/firstline 0700 firstline firstline -"
+want_line "$deploy/tmpfiles-firstline.conf" "d /var/log/firstline 0750 firstline firstline -"
+# shellcheck disable=SC2016 # the backquotes are Markdown, not a command
+grep -qF '`deploy/tmpfiles-firstline.conf`' "$design" || fail "the design does not name deploy/tmpfiles-firstline.conf"
+
 # logrotate: the settings the design lists, and the hourly timer drop-in.
 want_line "$deploy/logrotate-firstline" "/var/log/firstline/app.log {"
 for line in daily 'maxsize 100M' 'rotate 7' compress copytruncate; do

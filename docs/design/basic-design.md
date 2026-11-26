@@ -367,7 +367,8 @@ TLA+の仕様は`spec/Purchase.tla`、TLCの設定は`spec/Purchase.cfg`です�
 
 | 項目 | 設定 |
 |---|---|
-| CSP | `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'`を全応答に付け、inlineのscriptとstyleを使わない |
+| CSP | `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`を全応答に付け、inlineのscriptとstyleを使わない |
+| HSTS | `Strict-Transport-Security: max-age=63072000`を全応答に付ける。画面を返す待ち受けはTLSだけなので、ブラウザに2年間HTTPを使わせない |
 | htmxの設定 | 各画面の`<head>`に`<meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false, "selfRequestsOnly": true, "historyRestoreAsHxRequest": false}'>`を置く。htmxがinlineのstyleを足さず、evalを使う機能も止まるので、CSPを`'self'`だけにできる。処理中の印を出すときは、`.htmx-indicator`のCSSを`internal/web/static/`に置く |
 | 部分の応答 | htmxの要求（`HX-Request`の見出しがある要求）には、画面全体でなく更新する部分のHTMLだけを返す。同じURLで全体と部分を返し分けるので、`Vary`に`HX-Request`を入れる |
 | キャッシュ | 照会トークンを含む画面とその部分の応答には`Cache-Control: no-store`を付ける |
@@ -509,6 +510,12 @@ firstlineは環境変数で設定します。
 | ファイルシステムの保護 | `ProtectSystem=strict` | `ProtectSystem=strict` |
 | 書ける場所 | `ReadWritePaths=/var/lib/firstline` | `ReadWritePaths=/var/lib/firstline` |
 | ポート443 | `AmbientCapabilities=CAP_NET_BIND_SERVICE` | 使わない |
+| 権限の上限 | `NoNewPrivileges=yes`、`CapabilityBoundingSet=CAP_NET_BIND_SERVICE` | `NoNewPrivileges=yes`、`CapabilityBoundingSet=` |
+| 隔離 | `PrivateTmp=yes`、`PrivateDevices=yes`、`ProtectHome=yes`、`ProtectKernelTunables=yes`、`ProtectKernelModules=yes`、`ProtectControlGroups=yes`、`RestrictSUIDSGID=yes`、`LockPersonality=yes` | `PrivateTmp=yes`、`PrivateDevices=yes`、`ProtectHome=yes`、`ProtectKernelTunables=yes`、`ProtectKernelModules=yes`、`ProtectControlGroups=yes`、`RestrictSUIDSGID=yes`、`LockPersonality=yes` |
+| 通信の種類 | `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` | `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` |
+| 作るファイルの権限 | `UMask=0077`（DBと`litestream`の作業ファイルを他の利用者に読ませない） | `UMask=0077` |
+
+`/var/lib/firstline`（`0700`）と`/var/log/firstline`（`0750`）は、`deploy/tmpfiles-firstline.conf`を`/etc/tmpfiles.d/firstline.conf`に置き、`systemd-tmpfiles --create`で作ります。systemdは`StandardOutput=append:`のファイルを`LogsDirectory=`がディレクトリを作るより前に開くので、これがないと新しいホストで`firstline`が起動しません（状態209/STDOUT）。`litestream.env`にはR2の鍵が入るので、2つの環境変数のファイルはどちらも所有者を`firstline`、権限を`0600`にします。
 
 `/var/log/firstline/app.log`はlogrotateで切り替えます。設定は`daily`、`maxsize 100M`、`rotate 7`、`compress`、`copytruncate`です。[logrotate](https://man7.org/linux/man-pages/man8/logrotate.8.html)は普段は1日に1回だけ動き、`maxsize`も動いた時点でしか見ません。そこで`logrotate.timer`のdrop-inで`OnCalendar=hourly`にし、毎時に大きさを見る構成です。ファイル1つの大きさは100MBに1時間分のログを足した量までに収まります。systemdは追記のモードでファイルを開くので、`copytruncate`で切り詰めた後も先頭から書き直されます。失われうるのは切り詰めの直前に書かれた数行のログだけで、購入の記録はDBにあるので影響しません。
 
