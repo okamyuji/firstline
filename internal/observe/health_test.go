@@ -230,6 +230,29 @@ func TestHandlerReturnsTheSpecFields(t *testing.T) {
 	}
 }
 
+func TestSnapshotCountsDroppedAsyncItems(t *testing.T) {
+	r := observe.NewRecorder()
+	w := newWriter(t, r)
+	// The writer is not running, so the item after the 16 queued ones is dropped.
+	for range 17 {
+		w.Send(func(context.Context, bun.Tx) error { return nil })
+	}
+	s := observe.Snapshot(r, w, "", func() time.Time { return time.Time{} }, func() time.Time { return t0 }, t0)
+	if s.DroppedTotal != 1 || s.QueueLen != 16 {
+		t.Errorf("dropped %d, queue %d; want 1 and 16", s.DroppedTotal, s.QueueLen)
+	}
+}
+
+func TestHandlerWritesReconcileTimeInUTC(t *testing.T) {
+	at := time.Date(2026, 11, 26, 21, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	w := httptest.NewRecorder()
+	observe.Handler(discard, func() port.HealthSnapshot { return port.HealthSnapshot{LastReconcileAt: at} }).
+		ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if !strings.Contains(w.Body.String(), `"last_reconcile_at":"2026-11-26T12:00:00Z"`) {
+		t.Fatalf("body %s", w.Body)
+	}
+}
+
 func TestSnapshotWithoutASQLiteFileReportsNoSizes(t *testing.T) {
 	r := observe.NewRecorder()
 	s := observe.Snapshot(r, newWriter(t, r), "",

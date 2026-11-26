@@ -119,7 +119,7 @@ func (wr *wiring) lifecycle() *lifecycle {
 	if metrics[wr.cfg.Metrics] {
 		sink := emf.New(wr.cfg.EMFAddr)
 		l.loops = append(l.loops, func(ctx context.Context) {
-			observe.Run(ctx, time.After, emfEvery, wr.snapshot, sink, wr.log)
+			observe.Run(ctx, l.after, emfEvery, wr.snapshot, sink, wr.log)
 		})
 	}
 	return l

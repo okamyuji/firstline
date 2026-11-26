@@ -51,18 +51,12 @@ echo "== go build"
 go build ./...
 
 echo "== deploy"
-# macOS has no systemd-analyze, so grep the values the service depends on.
-for line in 'TimeoutStopSec=30' 'RuntimeDirectory=firstline' 'LogsDirectory=firstline' 'ExecReload=/bin/kill -HUP $MAINPID'; do
-	grep -qxF "$line" deploy/firstline.service || {
-		echo "deploy/firstline.service lacks: $line" >&2
-		exit 1
-	}
-done
 if command -v shellcheck >/dev/null 2>&1; then
-	shellcheck scripts/restore.sh scripts/restore_test.sh scripts/e2e.sh deploy/firstline-cert-deploy
+	shellcheck scripts/restore.sh scripts/restore_test.sh scripts/deploy_test.sh scripts/e2e.sh deploy/firstline-cert-deploy
 else
 	echo "check.sh: shellcheck not found; skipped" >&2
 fi
+bash scripts/deploy_test.sh
 bash scripts/restore_test.sh
 
 # cover_gate <profile> fails when the total statement coverage is below 80%.

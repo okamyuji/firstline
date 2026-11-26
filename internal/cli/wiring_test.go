@@ -81,6 +81,13 @@ func status(t *testing.T, c *http.Client, method, url string) int {
 func TestServeEndToEnd(t *testing.T) {
 	requireUnixSockets(t)
 	over, cert := serveEnv(t)
+	// A socket file left by a crash, which serve must replace.
+	stale, err := net.Listen("unix", over["FIRSTLINE_ADMIN_SOCK"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.(*net.UnixListener).SetUnlinkOnClose(false)
+	_ = stale.Close()
 	term := make(chan os.Signal, 1)
 	done := make(chan error, 1)
 	go func() { done <- serveWith(testEnv(over, nil, io.Discard), term, make(chan os.Signal)) }()

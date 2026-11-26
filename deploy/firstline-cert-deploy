@@ -3,7 +3,8 @@
 set -euo pipefail
 
 src=${RENEWED_LINEAGE:?RENEWED_LINEAGE is not set}
-dest=/etc/firstline/tls
+# FIRSTLINE_TLS_DIR exists for scripts/deploy_test.sh; certbot never sets it.
+dest=${FIRSTLINE_TLS_DIR:-/etc/firstline/tls}
 
 for name in fullchain.pem privkey.pem; do
 	# The temp file is created 0600 so the private key is never readable by others.

@@ -331,3 +331,26 @@ func TestOrganizerHandlerTakesTheLongestPasswordInJSON(t *testing.T) {
 		t.Errorf("status = %d, password %d bytes; want 201 and the whole password", rr.Code, len(got))
 	}
 }
+
+func TestOrganizerHandlerAnswersOnlyPOSTWithABoundedBody(t *testing.T) {
+	var created int
+	h := organizerHandler(creatorFunc(func(context.Context, string, string) error { created++; return nil }), reportTo(&recordingReporter{}))
+	valid := `{"email":"a@x.example","password":"long enough pw"}`
+	oversized := `{"email":"a@x.example","password":"` + strings.Repeat("a", 16<<10) + `"}`
+	for _, c := range []struct {
+		method, body string
+		want         int
+	}{
+		{http.MethodGet, valid, http.StatusMethodNotAllowed},
+		{http.MethodPost, oversized, http.StatusBadRequest},
+	} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(c.method, "/organizers", strings.NewReader(c.body)))
+		if rr.Code != c.want {
+			t.Errorf("%s with %d bytes = %d; want %d", c.method, len(c.body), rr.Code, c.want)
+		}
+	}
+	if created != 0 {
+		t.Errorf("CreateOrganizer ran %d times", created)
+	}
+}

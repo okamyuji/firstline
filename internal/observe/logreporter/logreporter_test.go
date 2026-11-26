@@ -25,7 +25,7 @@ func TestReportWritesOneErrorJSONLine(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
 		t.Fatal(err)
 	}
-	if rec["level"] != "ERROR" || rec["error"] != "boom" || rec["order"] != "o1" {
+	if rec["level"] != "ERROR" || rec["msg"] != "reported error" || rec["error"] != "boom" || rec["order"] != "o1" {
 		t.Fatalf("unexpected record: %v", rec)
 	}
 }

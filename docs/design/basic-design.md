@@ -506,6 +506,7 @@ firstlineは環境変数で設定します。
 | 標準出力 | `StandardOutput=append:/var/log/firstline/app.log` | 既定（journald） |
 | 実行時のディレクトリ | `RuntimeDirectory=firstline`（`/run/firstline/`） | 使わない |
 | ログのディレクトリ | `LogsDirectory=firstline`（`/var/log/firstline/`） | 使わない |
+| ファイルシステムの保護 | `ProtectSystem=strict` | `ProtectSystem=strict` |
 | 書ける場所 | `ReadWritePaths=/var/lib/firstline` | `ReadWritePaths=/var/lib/firstline` |
 | ポート443 | `AmbientCapabilities=CAP_NET_BIND_SERVICE` | 使わない |
 

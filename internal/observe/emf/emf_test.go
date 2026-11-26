@@ -15,7 +15,13 @@ import (
 
 func listen(t *testing.T) (net.Listener, chan string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	return listenOn(t, "127.0.0.1:0")
+}
+
+// listenOn accepts connections on addr and sends each line it reads to the channel.
+func listenOn(t *testing.T, addr string) (net.Listener, chan string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
