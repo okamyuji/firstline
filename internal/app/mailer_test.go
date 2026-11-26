@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -243,7 +244,7 @@ func TestSendMailPurchasedAndRefundBodies(t *testing.T) {
 		{To: "b@x", Lang: "ja", Subject: tr.T("ja", i18n.MailPurchasedSubject, "j"),
 			Body: tr.T("ja", i18n.MailPurchasedBody, "j", "2027-01-16 17:00", "2-3", lookupURL(b))},
 		{To: "c@x", Lang: "en", Subject: tr.T("en", i18n.MailRefundSubject, "e"),
-			Body: tr.T("en", i18n.MailRefundBody, "e", "15000", lookupURL(c))},
+			Body: tr.T("en", i18n.MailRefundBody, "e", "15,000", lookupURL(c))},
 	}
 	got := m.mailer.Sent()
 	if len(got) != len(want) {
@@ -272,5 +273,50 @@ func TestSendMailReturnsListError(t *testing.T) {
 	_ = m.s.Read.Close()
 	if n, err := m.send(); err == nil || n != 0 {
 		t.Errorf("n = %d, err = %v; want 0 and an error", n, err)
+	}
+}
+
+func TestSendMailRefundAmountCarriesTheCurrency(t *testing.T) {
+	for _, tc := range []struct {
+		lang   string
+		amount int
+		want   string
+	}{
+		{"ja", 999, "999円"}, {"ja", 1000, "1,000円"}, {"ja", 1234567, "1,234,567円"},
+		{"en", 999, "JPY 999"}, {"en", 1000, "JPY 1,000"}, {"en", 1234567, "JPY 1,234,567"},
+	} {
+		m := newMailEnv(t).start()
+		id := m.holdAs("a@x", tc.lang, 1)
+		p := m.purchase(id)
+		if err := m.svc.Completed(t.Context(), port.Completion{PurchaseID: id, PaymentID: *p.PaymentID, Amount: int(p.Amount), At: expiresAt}); err != nil {
+			t.Fatal(err)
+		}
+		m.exec("UPDATE purchases SET amount = ? WHERE id = ?", tc.amount, id)
+		m.exec("UPDATE mail_outbox SET sent_at = 0 WHERE kind = 'hold'")
+		m.mustSend(1)
+		if body := m.mailer.Sent()[0].Body; !strings.Contains(body, tc.want) {
+			t.Errorf("%s refund body for %d = %q; want it to contain %q", tc.lang, tc.amount, body, tc.want)
+		}
+	}
+}
+
+// A sent mail whose sent_at write fails is sent again on the next run, so the
+// write error must reach the caller instead of vanishing.
+func TestSendMailReturnsSentAtWriteErrors(t *testing.T) {
+	m := newMailEnv(t).start()
+	sent := m.holdAs("a@x", "en", 1)
+	skipped := m.holdAs("b@x", "en", 1)
+	if err := m.svc.Failed(t.Context(), skipped, ""); err != nil {
+		t.Fatal(err)
+	}
+	m.exec("CREATE TRIGGER fail_sent_at BEFORE UPDATE OF sent_at ON mail_outbox BEGIN SELECT RAISE(ABORT, 'disk says no'); END")
+	n, err := m.send()
+	if n != 1 || len(m.mailer.Sent()) != 1 {
+		t.Errorf("n = %d, sent = %d; want 1, 1", n, len(m.mailer.Sent()))
+	}
+	for _, id := range []string{sent, skipped} {
+		if want := fmt.Sprintf("mark mail %d sent", m.mailID(id, "hold")); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v; want it to contain %q", err, want)
+		}
 	}
 }

@@ -13,6 +13,8 @@ import (
 	"github.com/okamyuji/firstline/internal/i18n"
 	"github.com/okamyuji/firstline/internal/port"
 	"github.com/uptrace/bun"
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
 )
 
 const (
@@ -140,7 +142,7 @@ func (w mailText) compose(r outboxMail) (port.Mail, error) {
 		mail.Body = w.tr.T(lang, i18n.MailPurchasedBody, title, jstTime(lang, r.StartsAt), ticketRange(r), url)
 	case domain.MailRefund:
 		mail.Subject = w.tr.T(lang, i18n.MailRefundSubject, title)
-		mail.Body = w.tr.T(lang, i18n.MailRefundBody, title, strconv.Itoa(r.Amount), url)
+		mail.Body = w.tr.T(lang, i18n.MailRefundBody, title, message.NewPrinter(language.English).Sprintf("%d", r.Amount), url)
 	default:
 		return port.Mail{}, fmt.Errorf("mail %d: unknown kind %q", r.ID, r.Kind)
 	}

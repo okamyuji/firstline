@@ -167,7 +167,7 @@ var wantSchema = map[string]struct{ cols, indexes []string }{
 	},
 	"mail_outbox": {
 		[]string{"id INTEGER pk", "purchase_id TEXT notnull", "kind TEXT notnull", "lang TEXT notnull", "sent_at BIGINT"},
-		nil,
+		[]string{"mail_outbox_sent_at_id(sent_at,id) c"},
 	},
 	"billing_logs": {
 		[]string{"purchase_id TEXT notnull", "payment_id TEXT notnull", "kind TEXT notnull", "amount BIGINT notnull", "at BIGINT notnull"},

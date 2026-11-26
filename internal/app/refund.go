@@ -50,11 +50,10 @@ func (s *Service) RetryRefunds(ctx context.Context) (int, error) {
 func (s *Service) orphanRefunded(ctx context.Context, o refundingOrphan) error {
 	return s.Writer.Do(ctx, func(ctx context.Context, tx bun.Tx) error {
 		now := s.Clock().UnixMilli()
-		n, err := affected(s.Store.Exec(ctx, tx, "set_orphan_refunded", now, o.PaymentID))
-		if err != nil || n == 0 {
+		if _, err := s.Store.Exec(ctx, tx, "set_orphan_refunded", now, o.PaymentID); err != nil {
 			return err
 		}
-		_, err = s.Store.Exec(ctx, tx, "insert_billing", o.PurchaseID, o.PaymentID, "refund", o.Amount, now)
+		_, err := s.Store.Exec(ctx, tx, "insert_billing", o.PurchaseID, o.PaymentID, "refund", o.Amount, now)
 		return err
 	})
 }

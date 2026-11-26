@@ -62,7 +62,7 @@ var enStrings = map[string]string{
 	MailPurchasedSubject: "[firstline] Your purchase of %s is confirmed",
 	MailPurchasedBody:    "Your purchase of %[1]s is confirmed.\nDate and time: %[2]s\nReference number: %[3]s\nCheck your purchase here: %[4]s\n",
 	MailRefundSubject:    "[firstline] Your refund for %s has started",
-	MailRefundBody:       "Your refund for %[1]s has started.\nRefund amount: %[2]s\nCheck your purchase here: %[3]s\n",
+	MailRefundBody:       "Your refund for %[1]s has started.\nRefund amount: JPY %[2]s\nCheck your purchase here: %[3]s\n",
 
 	ErrSoldOut:            "Sold out.",
 	ErrInvalidTransition:  "This purchase cannot do that in its current state.",

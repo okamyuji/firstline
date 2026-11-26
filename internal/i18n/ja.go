@@ -1,7 +1,8 @@
 package i18n
 
 // Mail body placeholders: hold (title, quantity, deadline, url), purchased
-// (title, date, seat number, url), refund (title, amount, url).
+// (title, date, ticket number, url), refund (title, amount in yen with digit
+// grouping, url).
 var jaStrings = map[string]string{
 	SiteTitle:   "firstline",
 	NavEvents:   "イベント一覧",
@@ -64,7 +65,7 @@ var jaStrings = map[string]string{
 	MailPurchasedSubject: "【firstline】%s の購入が確定しました",
 	MailPurchasedBody:    "%s の購入が確定しました。\n開催日時: %s\n整理番号: %s\n購入の状況はこちらで確かめられます: %s\n",
 	MailRefundSubject:    "【firstline】%s の払い戻しを始めました",
-	MailRefundBody:       "%s の払い戻しを始めました。\n払い戻す金額: %s\n購入の状況はこちらで確かめられます: %s\n",
+	MailRefundBody:       "%s の払い戻しを始めました。\n払い戻す金額: %s円\n購入の状況はこちらで確かめられます: %s\n",
 
 	ErrSoldOut:            "売り切れました。",
 	ErrInvalidTransition:  "この購入は、いまの状態ではその操作ができません。",

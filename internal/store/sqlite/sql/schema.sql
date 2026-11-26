@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS mail_outbox (
     sent_at BIGINT
 );
 
+CREATE INDEX IF NOT EXISTS mail_outbox_sent_at_id ON mail_outbox (sent_at, id);
+
 CREATE TABLE IF NOT EXISTS billing_logs (
     purchase_id TEXT NOT NULL,
     payment_id TEXT NOT NULL,
