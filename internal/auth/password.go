@@ -69,11 +69,12 @@ func VerifyPassword(hash, pw string) (bool, error) {
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 
-// Limiter caps concurrent Argon2id computations at the CPU count, so a burst
-// of logins cannot take 64 MiB each without bound.
+// Limiter caps concurrent Argon2id computations at GOMAXPROCS, so a burst of
+// logins cannot take 64 MiB each without bound. GOMAXPROCS honours a
+// container's CPU quota; runtime.NumCPU counts every host CPU.
 type Limiter struct{ slots chan struct{} }
 
-func NewLimiter() *Limiter { return &Limiter{slots: make(chan struct{}, runtime.NumCPU())} }
+func NewLimiter() *Limiter { return &Limiter{slots: make(chan struct{}, runtime.GOMAXPROCS(0))} }
 
 // Acquire waits for a free slot until ctx is done; the HTTP layer turns the error into 503.
 func (l *Limiter) Acquire(ctx context.Context) error {

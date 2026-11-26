@@ -95,12 +95,14 @@ func TestVerifyPasswordRejectsMalformed(t *testing.T) {
 	}
 }
 
+// The slot count follows GOMAXPROCS, which honours a container's CPU quota;
+// runtime.NumCPU reports every host CPU and would let more 64 MiB hashes run.
 func TestLimiterAcquireFailsWhenFullUntilRelease(t *testing.T) {
+	old := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(old) })
 	l := NewLimiter()
-	for range runtime.NumCPU() {
-		if err := l.Acquire(t.Context()); err != nil {
-			t.Fatal(err)
-		}
+	if err := l.Acquire(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
