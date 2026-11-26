@@ -9,6 +9,14 @@ for tool in gofmt staticcheck golangci-lint gremlins gocyclo java; do
 	}
 done
 
+# gremlins --diff mutates only what git diff shows, which leaves out untracked files.
+untracked=$(git ls-files --others --exclude-standard -- '*.go')
+if [ -n "$untracked" ]; then
+	echo "check.sh: untracked Go files are skipped by gremlins --diff; git add them first:" >&2
+	echo "$untracked" >&2
+	exit 1
+fi
+
 echo "== gofmt"
 unformatted=$(gofmt -l .)
 if [ -n "$unformatted" ]; then
