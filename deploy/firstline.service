@@ -1,0 +1,22 @@
+[Unit]
+Description=firstline ticket sales
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=firstline
+EnvironmentFile=/etc/firstline/env
+ExecStart=/usr/local/bin/firstline serve
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=append:/var/log/firstline/app.log
+RuntimeDirectory=firstline
+LogsDirectory=firstline
+ProtectSystem=strict
+ReadWritePaths=/var/lib/firstline
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

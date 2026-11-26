@@ -1,0 +1,15 @@
+[Unit]
+Description=Litestream replication of the firstline database
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=firstline
+EnvironmentFile=/etc/firstline/litestream.env
+ExecStart=/usr/bin/litestream replicate -config /etc/litestream.yml
+Restart=always
+ProtectSystem=strict
+ReadWritePaths=/var/lib/firstline
+
+[Install]
+WantedBy=multi-user.target

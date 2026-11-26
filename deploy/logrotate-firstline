@@ -1,0 +1,9 @@
+/var/log/firstline/app.log {
+    daily
+    maxsize 100M
+    rotate 7
+    compress
+    copytruncate
+    missingok
+    notifempty
+}

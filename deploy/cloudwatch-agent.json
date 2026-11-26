@@ -1,0 +1,23 @@
+{
+  "agent": { "metrics_collection_interval": 60 },
+  "metrics": {
+    "metrics_collected": {
+      "disk": { "resources": ["/"], "measurement": ["used_percent"] }
+    }
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          { "file_path": "/var/log/firstline/app.log", "log_group_name": "/firstline/app", "log_stream_name": "{instance_id}", "retention_in_days": 30 }
+        ]
+      },
+      "journald": {
+        "collect_list": [
+          { "log_group_name": "/firstline/litestream", "log_stream_name": "{instance_id}", "units": ["litestream"], "retention_in_days": 30 }
+        ]
+      }
+    },
+    "metrics_collected": { "emf": {} }
+  }
+}
