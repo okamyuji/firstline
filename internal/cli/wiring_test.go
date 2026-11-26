@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -171,6 +172,49 @@ func TestServeFailsWhenStoreCannotOpen(t *testing.T) {
 	over["FIRSTLINE_DB_PATH"] = filepath.Join(t.TempDir(), "missing", "db")
 	if err := serveWith(testEnv(over, nil, io.Discard), make(chan os.Signal), make(chan os.Signal)); err == nil {
 		t.Fatal("serve with an unopenable store succeeded")
+	}
+}
+
+func TestServeKeepsARegularFileAtTheSocketPath(t *testing.T) {
+	over, _ := serveEnv(t)
+	if err := os.WriteFile(over["FIRSTLINE_ADMIN_SOCK"], []byte("precious data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := serveWith(testEnv(over, nil, io.Discard), make(chan os.Signal), make(chan os.Signal))
+	if err == nil || !strings.Contains(err.Error(), "FIRSTLINE_ADMIN_SOCK") {
+		t.Errorf("serve = %v; want an error naming FIRSTLINE_ADMIN_SOCK", err)
+	}
+	if b, _ := os.ReadFile(over["FIRSTLINE_ADMIN_SOCK"]); string(b) != "precious data" {
+		t.Errorf("the file at the socket path now holds %q", b)
+	}
+	if _, err := os.Stat(over["FIRSTLINE_DB_PATH"]); !os.IsNotExist(err) {
+		t.Errorf("the database was opened before the check: %v", err)
+	}
+}
+
+func TestStartUnixKeepsARegularFile(t *testing.T) {
+	path := filepath.Join(shortDir(t), "admin.sock")
+	if err := os.WriteFile(path, []byte("precious data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := startUnix(newServer(nil, slog.New(slog.DiscardHandler)), path)(make(chan error, 1)); err == nil {
+		t.Error("startUnix over a regular file succeeded")
+	}
+	if b, _ := os.ReadFile(path); string(b) != "precious data" {
+		t.Errorf("the file at the socket path now holds %q", b)
+	}
+}
+
+func TestRemoveStaleSocketReportsStatErrors(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeStaleSocket(filepath.Join(file, "admin.sock")); !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("removeStaleSocket under a file = %v; want ENOTDIR", err)
+	}
+	if err := removeStaleSocket(filepath.Join(t.TempDir(), "none.sock")); err != nil {
+		t.Errorf("removeStaleSocket of a missing path = %v; want nil", err)
 	}
 }
 

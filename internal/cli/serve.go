@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -198,14 +199,29 @@ func startOn(network, addr string, ready func() error, serve func(net.Listener) 
 
 func noReady() error { return nil }
 
-// startUnix restricts the socket to its owner before serving it.
+// startUnix restricts the socket to its owner before serving it. Step 1 has
+// already removed a stale socket with removeStaleSocket.
 func startUnix(s *http.Server, path string) func(chan<- error) error {
 	return func(errc chan<- error) error {
-		// A crash leaves the socket file behind and Listen would fail on it. The
-		// flock this process holds means no live serve owns it.
-		_ = os.Remove(path)
 		return startOn("unix", path, func() error { return os.Chmod(path, 0o600) }, s.Serve)(errc)
 	}
+}
+
+// removeStaleSocket removes a socket file left by a crash, on which Listen
+// would fail. The flock this process holds means no live serve owns it.
+// Anything else at the path is the operator's file and stops the start.
+func removeStaleSocket(path string) error {
+	fi, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("FIRSTLINE_ADMIN_SOCK: %w", err)
+	}
+	if fi.Mode().Type() != fs.ModeSocket {
+		return fmt.Errorf("FIRSTLINE_ADMIN_SOCK: %s exists and is not a socket", path)
+	}
+	return os.Remove(path)
 }
 
 func serveCmd(_ context.Context, e env, _ []string) int {
@@ -229,6 +245,9 @@ func serveWith(e env, term, hup <-chan os.Signal) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
+	if err := removeStaleSocket(cfg.AdminSock); err != nil {
+		return err
+	}
 	cs, err := loadCert(cfg.TLSCert, cfg.TLSKey)
 	if err != nil {
 		return err

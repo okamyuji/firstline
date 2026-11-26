@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +21,11 @@ import (
 	"github.com/okamyuji/firstline/internal/store/sqlite"
 )
 
-const minTokenKeyBytes = 32
+const (
+	minTokenKeyBytes = 32
+	// Linux's sun_path holds 108 bytes including the terminating NUL (unix(7)).
+	maxSocketPath = 107
+)
 
 // Config is the environment of every subcommand, as the settings table lists it.
 type Config struct {
@@ -74,6 +79,8 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		oneOf("FIRSTLINE_METRICS", c.Metrics, metrics),
 		oneOf("FIRSTLINE_FAKE_PAYMENT_OUTCOME", outcome, outcomes),
 		tokenKey(c.TokenKey), baseURL(c.BaseURL), rateErr,
+		hostPort("FIRSTLINE_ADDR", c.Addr), hostPort("FIRSTLINE_EMF_ADDR", c.EMFAddr),
+		loopback(c.AdminAddr), socketPath(c.AdminSock),
 	}
 	for _, r := range c.ErrorReporters {
 		errs = append(errs, oneOf("FIRSTLINE_ERROR_REPORTER", r, reporters))
@@ -103,6 +110,33 @@ func nonNegative(name, v string) (int, error) {
 func tokenKey(k []byte) error {
 	if len(k) < minTokenKeyBytes {
 		return fmt.Errorf("FIRSTLINE_TOKEN_KEY: %d bytes; at least %d are required", len(k), minTokenKeyBytes)
+	}
+	return nil
+}
+
+func hostPort(name, addr string) error {
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	return nil
+}
+
+// loopback keeps /healthz, which has no authentication, off other hosts.
+// Only an IP literal is taken: a name could resolve to anything.
+func loopback(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("FIRSTLINE_ADMIN_ADDR: %w", err)
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("FIRSTLINE_ADMIN_ADDR: %q is not a loopback IP address", host)
+	}
+	return nil
+}
+
+func socketPath(p string) error {
+	if len(p) > maxSocketPath {
+		return fmt.Errorf("FIRSTLINE_ADMIN_SOCK: %d bytes; a unix socket path holds at most %d", len(p), maxSocketPath)
 	}
 	return nil
 }

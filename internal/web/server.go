@@ -145,6 +145,8 @@ func headers(next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("Content-Security-Policy", csp)
 		h.Set("X-Content-Type-Options", "nosniff")
+		// Status and lookup URLs carry the purchase token in the query.
+		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Content-Language", lang(r))
 		h.Set("Vary", "Accept-Language, HX-Request")
 		next.ServeHTTP(w, r)

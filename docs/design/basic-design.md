@@ -194,7 +194,7 @@ HTTPのリクエストは10秒の期限を持ちます。`http.Server`の時間�
 
 起動は次の順で進みます。
 
-1. SIGHUPとSIGTERMの受け口を作り、`FIRSTLINE_LOCK_PATH`を`flock`で取ります。ロックを取れなければ起動しません。続けて設定を検証し、TLSの証明書と秘密鍵の読み込みと`FIRSTLINE_TOKEN_KEY`の長さのどちらかが失敗したら起動しません。
+1. SIGHUPとSIGTERMの受け口を作り、設定を検証します。ロックの場所も設定にあるので、検証はロックより先です。`FIRSTLINE_ADDR`、`FIRSTLINE_ADMIN_ADDR`、`FIRSTLINE_EMF_ADDR`が`ホスト:ポート`の形でないとき、`FIRSTLINE_ADMIN_ADDR`がループバックのIPアドレスでないとき、`FIRSTLINE_ADMIN_SOCK`が107バイトを超えるときも起動しません。続けて`FIRSTLINE_LOCK_PATH`を`flock`で取り、取れなければ起動しません。`FIRSTLINE_ADMIN_SOCK`の場所にソケットでないファイルがあれば、消さずに起動を止めます。最後にTLSの証明書と秘密鍵を読み、失敗したら起動しません。
 2. WriteDBを開き、`PingContext`で接続してWALにします。
 3. ReadDBを開き、`PingContext`で確かめます。
 4. 書き込みゴルーチンを始めます。
@@ -371,6 +371,7 @@ TLA+の仕様は`spec/Purchase.tla`、TLCの設定は`spec/Purchase.cfg`です�
 | htmxの設定 | 各画面の`<head>`に`<meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false, "selfRequestsOnly": true, "historyRestoreAsHxRequest": false}'>`を置く。htmxがinlineのstyleを足さず、evalを使う機能も止まるので、CSPを`'self'`だけにできる。処理中の印を出すときは、`.htmx-indicator`のCSSを`internal/web/static/`に置く |
 | 部分の応答 | htmxの要求（`HX-Request`の見出しがある要求）には、画面全体でなく更新する部分のHTMLだけを返す。同じURLで全体と部分を返し分けるので、`Vary`に`HX-Request`を入れる |
 | キャッシュ | 照会トークンを含む画面とその部分の応答には`Cache-Control: no-store`を付ける |
+| リファラー | `Referrer-Policy: no-referrer`を全応答に付ける。購入状況と照会のURLのクエリに照会トークンが入るため |
 | 取り直しの停止 | 購入状況の部分の応答は、状態が`held`の間は200、`held`でなくなったら286で返す。htmxは286を受け取ると取り直しを止める |
 
 [htmxの文書](https://github.com/bigskysoftware/htmx/blob/v2.0.8/www/content/docs.md)によれば、`allowEval`を`false`にすると`hx-on:`の属性とイベントのフィルタが使えなくなります。firstlineの画面はこれらを使いません。
@@ -471,7 +472,7 @@ firstlineは環境変数で設定します。
 | `FIRSTLINE_ERROR_REPORTER` | エラーの送り先の実装の名前。カンマで区切って複数を指定でき、すべてへ送る | `log` |
 | `FIRSTLINE_METRICS` | `emf`、`none` | `emf` |
 | `FIRSTLINE_EMF_ADDR` | EMFを送るCloudWatch Agentのアドレス | `127.0.0.1:25888` |
-| `FIRSTLINE_ADMIN_ADDR` | `/healthz`を返す運用者向けの待ち受け | `127.0.0.1:9090` |
+| `FIRSTLINE_ADMIN_ADDR` | `/healthz`を返す運用者向けの待ち受け。`/healthz`に認証はないので、ループバックのIPアドレスに限る | `127.0.0.1:9090` |
 | `FIRSTLINE_ADMIN_SOCK` | 主催者の追加を受けるUnixソケットのパス | `/run/firstline/admin.sock` |
 | `FIRSTLINE_LOCK_PATH` | 書き込むプロセスを1つにするロックファイルのパス | `/var/lib/firstline/firstline.lock` |
 | `FIRSTLINE_HOLD_RATE_PER_MIN` | IPアドレスごとの1分あたりの保留の作成の上限。0で制限を外す | `10` |

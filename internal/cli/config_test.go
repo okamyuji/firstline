@@ -47,7 +47,7 @@ func TestLoadConfigReadsEveryVariable(t *testing.T) {
 		"FIRSTLINE_TLS_CERT": "/c.pem", "FIRSTLINE_TLS_KEY": "/k.pem",
 		"FIRSTLINE_TOKEN_KEY": validKey + "x", "FIRSTLINE_BASE_URL": "https://b.example",
 		"FIRSTLINE_ERROR_REPORTER": "log,log", "FIRSTLINE_METRICS": "none", "FIRSTLINE_EMF_ADDR": "1.2.3.4:1",
-		"FIRSTLINE_ADMIN_ADDR": ":9", "FIRSTLINE_ADMIN_SOCK": "/s.sock", "FIRSTLINE_LOCK_PATH": "/l.lock",
+		"FIRSTLINE_ADMIN_ADDR": "[::1]:9", "FIRSTLINE_ADMIN_SOCK": "/s.sock", "FIRSTLINE_LOCK_PATH": "/l.lock",
 		"FIRSTLINE_HOLD_RATE_PER_MIN": "0", "FIRSTLINE_FAKE_PAYMENT_DELAY": "250ms",
 		"FIRSTLINE_FAKE_PAYMENT_OUTCOME": "fail",
 	}))
@@ -57,7 +57,7 @@ func TestLoadConfigReadsEveryVariable(t *testing.T) {
 	assertConfig(t, c, Config{
 		Store: "postgres", DBPath: "/d.db", DSN: "postgres://h/db", Inventory: "db", Addr: ":8443",
 		TLSCert: "/c.pem", TLSKey: "/k.pem", TokenKey: []byte(validKey + "x"), BaseURL: "https://b.example",
-		ErrorReporters: []string{"log", "log"}, Metrics: "none", EMFAddr: "1.2.3.4:1", AdminAddr: ":9",
+		ErrorReporters: []string{"log", "log"}, Metrics: "none", EMFAddr: "1.2.3.4:1", AdminAddr: "[::1]:9",
 		AdminSock: "/s.sock", LockPath: "/l.lock", HoldRatePerMin: 0,
 		FakePaymentDelay: 250 * time.Millisecond, FakePaymentOutcome: fake.Fail,
 	})
@@ -85,6 +85,13 @@ func TestLoadConfigRejects(t *testing.T) {
 		{"negative hold rate", "FIRSTLINE_HOLD_RATE_PER_MIN", "-1"},
 		{"bad payment delay", "FIRSTLINE_FAKE_PAYMENT_DELAY", "soon"},
 		{"unknown payment outcome", "FIRSTLINE_FAKE_PAYMENT_OUTCOME", "maybe"},
+		{"address without port", "FIRSTLINE_ADDR", "443"},
+		{"EMF address without port", "FIRSTLINE_EMF_ADDR", "127.0.0.1"},
+		{"admin address without port", "FIRSTLINE_ADMIN_ADDR", "127.0.0.1"},
+		{"admin address on every interface", "FIRSTLINE_ADMIN_ADDR", ":9090"},
+		{"admin address on a public IP", "FIRSTLINE_ADMIN_ADDR", "0.0.0.0:9090"},
+		{"admin address by name", "FIRSTLINE_ADMIN_ADDR", "example.com:9090"},
+		{"socket path too long for sun_path", "FIRSTLINE_ADMIN_SOCK", "/" + strings.Repeat("s", 107)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := LoadConfig(envOf(map[string]string{tc.key: tc.value}))
@@ -92,6 +99,17 @@ func TestLoadConfigRejects(t *testing.T) {
 				t.Errorf("LoadConfig error = %v; want one naming %s", err, tc.key)
 			}
 		})
+	}
+}
+
+func TestLoadConfigAcceptsLoopbackAdminAndTheLongestSocketPath(t *testing.T) {
+	for _, over := range []map[string]string{
+		{"FIRSTLINE_ADMIN_ADDR": "127.0.0.2:9090", "FIRSTLINE_ADMIN_SOCK": "/" + strings.Repeat("s", 106)},
+		{"FIRSTLINE_ADMIN_ADDR": "[::1]:9090", "FIRSTLINE_ADDR": "[::]:443"},
+	} {
+		if _, err := LoadConfig(envOf(over)); err != nil {
+			t.Errorf("LoadConfig(%v) = %v; want nil", over, err)
+		}
 	}
 }
 

@@ -249,6 +249,9 @@ func TestEveryResponseHasSecurityAndLanguageHeaders(t *testing.T) {
 		{"unknown event", req{method: "GET", target: "/events/nope"}, 404},
 		{"cross origin", req{method: "POST", target: "/events/e1/purchases", header: map[string]string{"Origin": "https://evil.example"}}, 403},
 		{"rate limited", req{method: "POST", target: "/events/e1/purchases"}, 429},
+		{"NUL in the path", req{method: "GET", target: "/events/%00"}, 400},
+		{"wrong method", req{method: "DELETE", target: "/lookup"}, 405},
+		{"status with a token", req{method: "GET", target: "/purchases/x?token=t"}, 404},
 	}
 	for _, lang := range []string{"ja", "en"} {
 		for _, c := range cases {
@@ -275,6 +278,10 @@ func TestEveryResponseHasSecurityAndLanguageHeaders(t *testing.T) {
 				}
 				if got := h.Get("X-Content-Type-Options"); got != "nosniff" {
 					t.Errorf("X-Content-Type-Options = %q", got)
+				}
+				// Status and lookup URLs carry the token in the query.
+				if got := h.Get("Referrer-Policy"); got != "no-referrer" {
+					t.Errorf("Referrer-Policy = %q", got)
 				}
 			})
 		}

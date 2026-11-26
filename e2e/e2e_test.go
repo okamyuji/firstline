@@ -91,6 +91,49 @@ func TestPurchaseLookupAndRestart(t *testing.T) {
 	assertTickets(t, buyer.lookup(t, token, "Purchased"), "1-2")
 }
 
+// TestSIGHUPReloadsTheCertificateAndKeepsServing sends the signal certbot's
+// deploy hook sends: without serve's handler Go would exit on it, and
+// Restart=on-failure would not bring serve back.
+func TestSIGHUPReloadsTheCertificateAndKeepsServing(t *testing.T) {
+	env, _ := serveEnv(t, "1s")
+	srv := start(t, buildBinary(t), env)
+	if got := servedSerial(t, env["FIRSTLINE_ADDR"]); got != 1 {
+		t.Fatalf("serial before the reload = %d; want 1", got)
+	}
+	writeCert(t, env["FIRSTLINE_TLS_CERT"], env["FIRSTLINE_TLS_KEY"], 2)
+	if err := srv.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for servedSerial(t, env["FIRSTLINE_ADDR"]) != 2 {
+		select {
+		case <-srv.exited:
+			t.Fatalf("serve exited on SIGHUP: %v\n%s", srv.waitErr, srv.out.String())
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("serve still serves the old certificate 10s after SIGHUP")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !healthy(env["FIRSTLINE_ADMIN_ADDR"]) {
+		t.Error("serve stopped answering /healthz after SIGHUP")
+	}
+	srv.stop(t)
+}
+
+// servedSerial is the serial number of the certificate serve presents now.
+func servedSerial(t *testing.T, addr string) int64 {
+	t.Helper()
+	// The test only reads the certificate; it does not trust it.
+	c, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	return c.ConnectionState().PeerCertificates[0].SerialNumber.Int64()
+}
+
 // TestLateCompletionIsRefunded covers a payment that completes after the hold
 // expired: expired, then refunding, then refunded by the refund retry.
 func TestLateCompletionIsRefunded(t *testing.T) {
@@ -189,7 +232,7 @@ func serveEnv(t *testing.T, paymentDelay string) (map[string]string, *x509.Certi
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	certFile, keyFile := filepath.Join(dir, "c.pem"), filepath.Join(dir, "k.pem")
-	cert := writeCert(t, certFile, keyFile)
+	cert := writeCert(t, certFile, keyFile, 1)
 	return map[string]string{
 		"FIRSTLINE_DB_PATH": filepath.Join(dir, "db"), "FIRSTLINE_LOCK_PATH": filepath.Join(dir, "l"),
 		"FIRSTLINE_ADMIN_SOCK": filepath.Join(dir, "admin.sock"), "FIRSTLINE_TLS_CERT": certFile, "FIRSTLINE_TLS_KEY": keyFile,
@@ -199,14 +242,14 @@ func serveEnv(t *testing.T, paymentDelay string) (map[string]string, *x509.Certi
 	}, cert
 }
 
-func writeCert(t *testing.T, certFile, keyFile string) *x509.Certificate {
+func writeCert(t *testing.T, certFile, keyFile string, serial int64) *x509.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "localhost"},
+		SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: "localhost"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(30 * 24 * time.Hour),
 		DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
