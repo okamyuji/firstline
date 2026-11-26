@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+
+	"github.com/okamyuji/firstline/internal/observe"
 )
 
 // env is the process's outside world, replaced in tests.
@@ -29,7 +31,7 @@ var commands = map[string]func(context.Context, env, []string) int{
 // Run executes the subcommand in args and returns the process exit status.
 // Logs are JSON lines on stdout; CLI messages go to stderr.
 func Run(args []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer) int {
-	log := slog.New(slog.NewJSONHandler(stdout, nil))
+	log := slog.New(observe.RequestIDHandler{Handler: slog.NewJSONHandler(stdout, nil)})
 	slog.SetDefault(log)
 	return run(context.Background(), args, env{getenv: getenv, stdin: stdin, stderr: stderr, log: log})
 }

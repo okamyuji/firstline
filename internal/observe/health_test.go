@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -177,9 +178,9 @@ func TestSnapshotCollectsEveryField(t *testing.T) {
 
 	want := port.HealthSnapshot{
 		CommitWaitP99Ms: 8, SyncItemsPerSecMax5m: 1, QueueLen: 0, QueueCap: 16,
-		QueueUsageAvg5m: 0.25, WALBytes: 123, DBBytes: 4096, LastReconcileAt: rec, TLSCertDaysLeft: 14,
+		QueueUsageAvg5m: 0.25, WALBytes: new(int64(123)), DBBytes: new(int64(4096)), LastReconcileAt: rec, TLSCertDaysLeft: 14,
 	}
-	if s != want {
+	if !reflect.DeepEqual(s, want) {
 		t.Fatalf("got %+v\nwant %+v", s, want)
 	}
 }
@@ -188,19 +189,19 @@ func TestSnapshotMissingFilesAreZero(t *testing.T) {
 	r := observe.NewRecorder()
 	s := observe.Snapshot(r, newWriter(t, r), filepath.Join(t.TempDir(), "none.db"),
 		func() time.Time { return time.Time{} }, func() time.Time { return t0.Add(-25 * time.Hour) }, t0)
-	if s.WALBytes != 0 || s.DBBytes != 0 {
-		t.Fatalf("sizes = %d, %d", s.WALBytes, s.DBBytes)
+	if *s.WALBytes != 0 || *s.DBBytes != 0 {
+		t.Fatalf("sizes = %d, %d", *s.WALBytes, *s.DBBytes)
 	}
 	if s.TLSCertDaysLeft != -2 {
 		t.Fatalf("expired cert days = %d, want -2 (floor)", s.TLSCertDaysLeft)
 	}
 }
 
-func TestHandlerReturnsTheNineSpecFields(t *testing.T) {
+func TestHandlerReturnsTheSpecFields(t *testing.T) {
 	rec := t0.Add(-time.Minute)
-	h := observe.Handler(func() port.HealthSnapshot {
+	h := observe.Handler(discard, func() port.HealthSnapshot {
 		return port.HealthSnapshot{CommitWaitP99Ms: 1.5, SyncItemsPerSecMax5m: 2, QueueLen: 3, QueueCap: 4,
-			QueueUsageAvg5m: 0.5, DroppedTotal: 6, WALBytes: 7, DBBytes: 8, LastReconcileAt: rec, TLSCertDaysLeft: 9}
+			QueueUsageAvg5m: 0.5, DroppedTotal: 6, WALBytes: new(int64(7)), DBBytes: new(int64(8)), LastReconcileAt: rec, TLSCertDaysLeft: 9}
 	})
 	w := httptest.NewRecorder()
 
@@ -224,43 +225,52 @@ func TestHandlerReturnsTheNineSpecFields(t *testing.T) {
 		t.Fatalf("keys %v", keys)
 	}
 	if got["commit_wait_p99_ms"] != 1.5 || got["queue_len"] != 3.0 || got["queue_cap"] != 4.0 ||
-		got["tls_cert_days_left"] != 9.0 || got["wal_bytes"] != 7.0 || got["last_reconcile_at"] != "2026-11-26T11:59:00Z" {
+		got["tls_cert_days_left"] != 9.0 || got["wal_bytes"] != 7.0 || got["db_bytes"] != 8.0 || got["last_reconcile_at"] != "2026-11-26T11:59:00Z" {
 		t.Fatalf("values %v", got)
+	}
+}
+
+func TestSnapshotWithoutASQLiteFileReportsNoSizes(t *testing.T) {
+	r := observe.NewRecorder()
+	s := observe.Snapshot(r, newWriter(t, r), "",
+		func() time.Time { return time.Time{} }, func() time.Time { return t0 }, t0)
+	if s.WALBytes != nil || s.DBBytes != nil {
+		t.Fatalf("sizes = %v, %v; want absent", s.WALBytes, s.DBBytes)
+	}
+	w := httptest.NewRecorder()
+	observe.Handler(discard, func() port.HealthSnapshot { return s }).
+		ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if !strings.Contains(w.Body.String(), `"wal_bytes":null,"db_bytes":null`) {
+		t.Fatalf("body %s", w.Body)
 	}
 }
 
 func TestHandlerNullReconcileBeforeFirstRun(t *testing.T) {
 	w := httptest.NewRecorder()
-	observe.Handler(func() port.HealthSnapshot { return port.HealthSnapshot{} }).
+	observe.Handler(discard, func() port.HealthSnapshot { return port.HealthSnapshot{} }).
 		ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if !strings.Contains(w.Body.String(), `"last_reconcile_at":null`) {
 		t.Fatalf("body %s", w.Body)
 	}
 }
 
-func captureDefaultLog(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	var buf bytes.Buffer
-	old := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(old) })
-	return &buf
-}
+var discard = slog.New(slog.DiscardHandler)
 
 func TestHandlerWarnsWhenWALExceedsOneGiB(t *testing.T) {
-	buf := captureDefaultLog(t)
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
 	get := func(wal int64) {
-		observe.Handler(func() port.HealthSnapshot { return port.HealthSnapshot{WALBytes: wal} }).
+		observe.Handler(log, func() port.HealthSnapshot { return port.HealthSnapshot{WALBytes: &wal} }).
 			ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	}
 
 	get(1 << 30)
 	if buf.Len() != 0 {
-		t.Fatalf("exactly 1 GiB must not warn: %s", buf)
+		t.Fatalf("exactly 1 GiB must not warn: %s", buf.String())
 	}
 	get(1<<30 + 1)
 	if !strings.Contains(buf.String(), `"level":"WARN"`) {
-		t.Fatalf("want WARN, got %q", buf)
+		t.Fatalf("want WARN, got %q", buf.String())
 	}
 }
 

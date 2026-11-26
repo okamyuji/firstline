@@ -76,17 +76,17 @@ func (wr *wiring) open(ctx context.Context) error {
 	wr.st, wr.w, wr.svc = st, w, svc
 	wr.https.Handler = withDeadline(web.NewHandler(web.Deps{
 		App: svc, Store: st, Writer: w, I18n: i18n.New(), Tokens: auth.Tokens{Key: wr.cfg.TokenKey},
-		Clock: time.Now, HoldRatePerMin: wr.cfg.HoldRatePerMin, Log: wr.log,
+		Clock: time.Now, HoldRatePerMin: wr.cfg.HoldRatePerMin, Errors: wr.rep,
 	}))
 	adminMux := http.NewServeMux()
-	adminMux.Handle("GET /healthz", observe.Handler(wr.snapshot))
+	adminMux.Handle("GET /healthz", observe.Handler(wr.log, wr.snapshot))
 	wr.admin.Handler = adminMux
 	wr.sock.Handler = organizerHandler(svc, reportTo(wr.rep))
 	return nil
 }
 
 func (wr *wiring) snapshot() port.HealthSnapshot {
-	return observe.Snapshot(wr.rec, wr.w, wr.cfg.DBPath, wr.svc.LastReconcileAt, wr.cs.notAfter, time.Now())
+	return observe.Snapshot(wr.rec, wr.w, wr.cfg.sqliteFile(), wr.svc.LastReconcileAt, wr.cs.notAfter, time.Now())
 }
 
 func (wr *wiring) lifecycle() *lifecycle {

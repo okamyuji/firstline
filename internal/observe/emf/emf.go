@@ -58,10 +58,12 @@ func (s *sink) Emit(ctx context.Context, h port.HealthSnapshot) error {
 		{"queue_cap", "Count", h.QueueCap},
 		{"queue_usage_avg_5m", "None", h.QueueUsageAvg5m},
 		{"dropped_total", "Count", h.DroppedTotal},
-		{"wal_bytes", "Bytes", h.WALBytes},
-		{"db_bytes", "Bytes", h.DBBytes},
 		{"last_reconcile_at", "Seconds", reconcile},
 		{"tls_cert_days_left", "Count", h.TLSCertDaysLeft},
+	}
+	// A store without a SQLite file has no sizes; a 0 would read as an empty file.
+	if h.WALBytes != nil && h.DBBytes != nil {
+		vals = append(vals, val{"wal_bytes", "Bytes", *h.WALBytes}, val{"db_bytes", "Bytes", *h.DBBytes})
 	}
 	doc := make(map[string]any, len(vals))
 	ms := make([]metric, len(vals))

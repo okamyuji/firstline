@@ -51,7 +51,7 @@ type HealthSnapshot struct {
 	QueueLen, QueueCap   int
 	QueueUsageAvg5m      float64
 	DroppedTotal         int64
-	WALBytes, DBBytes    int64
+	WALBytes, DBBytes    *int64 // nil without a SQLite file (PostgreSQL, MySQL)
 	LastReconcileAt      time.Time
 	TLSCertDaysLeft      int
 }

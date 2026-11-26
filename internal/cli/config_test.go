@@ -119,4 +119,7 @@ func TestDBTarget(t *testing.T) {
 	if sqliteCfg.dbTarget() != "/p.db" || pgCfg.dbTarget() != "dsn" {
 		t.Errorf("dbTarget = %q, %q; want /p.db, dsn", sqliteCfg.dbTarget(), pgCfg.dbTarget())
 	}
+	if sqliteCfg.sqliteFile() != "/p.db" || pgCfg.sqliteFile() != "" {
+		t.Errorf("sqliteFile = %q, %q; want /p.db and none", sqliteCfg.sqliteFile(), pgCfg.sqliteFile())
+	}
 }

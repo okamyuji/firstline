@@ -16,21 +16,24 @@ import (
 
 const walWarnBytes = 1 << 30
 
-// Snapshot gathers the /healthz values at now.
+// Snapshot gathers the /healthz values at now. dbPath is the SQLite file, or
+// "" for a store without one, whose sizes are then absent.
 func Snapshot(r *Recorder, w *writer.Writer, dbPath string, lastReconcile, certNotAfter func() time.Time, now time.Time) port.HealthSnapshot {
 	st := w.Stats()
-	return port.HealthSnapshot{
+	s := port.HealthSnapshot{
 		CommitWaitP99Ms:      r.CommitWaitP99Ms(now),
 		SyncItemsPerSecMax5m: r.SyncItemsPerSecMax(now),
 		QueueLen:             st.QueueLen,
 		QueueCap:             st.QueueCap,
 		QueueUsageAvg5m:      r.QueueUsageAvg(now),
 		DroppedTotal:         st.DroppedTotal,
-		WALBytes:             fileSize(dbPath + "-wal"),
-		DBBytes:              fileSize(dbPath),
 		LastReconcileAt:      lastReconcile(),
 		TLSCertDaysLeft:      int(math.Floor(certNotAfter().Sub(now).Hours() / 24)),
 	}
+	if dbPath != "" {
+		s.WALBytes, s.DBBytes = new(fileSize(dbPath+"-wal")), new(fileSize(dbPath))
+	}
+	return s
 }
 
 // fileSize is 0 for a missing file: SQLite removes the WAL when it is empty after a checkpoint.
@@ -49,18 +52,18 @@ type healthJSON struct {
 	QueueCap             int        `json:"queue_cap"`
 	QueueUsageAvg5m      float64    `json:"queue_usage_avg_5m"`
 	DroppedTotal         int64      `json:"dropped_total"`
-	WALBytes             int64      `json:"wal_bytes"`
-	DBBytes              int64      `json:"db_bytes"`
+	WALBytes             *int64     `json:"wal_bytes"`
+	DBBytes              *int64     `json:"db_bytes"`
 	LastReconcileAt      *time.Time `json:"last_reconcile_at"`
 	TLSCertDaysLeft      int        `json:"tls_cert_days_left"`
 }
 
 // Handler serves the /healthz JSON.
-func Handler(snap func() port.HealthSnapshot) http.Handler {
+func Handler(log *slog.Logger, snap func() port.HealthSnapshot) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		s := snap()
-		if s.WALBytes > walWarnBytes {
-			slog.WarnContext(req.Context(), "WAL file is over 1 GiB", "wal_bytes", s.WALBytes)
+		if s.WALBytes != nil && *s.WALBytes > walWarnBytes {
+			log.WarnContext(req.Context(), "WAL file is over 1 GiB", "wal_bytes", *s.WALBytes)
 		}
 		out := healthJSON{
 			s.CommitWaitP99Ms, s.SyncItemsPerSecMax5m, s.QueueLen, s.QueueCap, s.QueueUsageAvg5m,

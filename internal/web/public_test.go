@@ -20,6 +20,8 @@ import (
 	"github.com/okamyuji/firstline/internal/auth"
 	"github.com/okamyuji/firstline/internal/i18n"
 	"github.com/okamyuji/firstline/internal/inventory"
+	"github.com/okamyuji/firstline/internal/observe"
+	"github.com/okamyuji/firstline/internal/observe/logreporter"
 	"github.com/okamyuji/firstline/internal/payment/fake"
 	"github.com/okamyuji/firstline/internal/port"
 	"github.com/okamyuji/firstline/internal/store"
@@ -94,7 +96,7 @@ func newEnv(t *testing.T, rate int) *env {
 	e.svc = svc
 	e.h = web.NewHandler(web.Deps{
 		App: svc, Store: s, Writer: w, I18n: tr, Tokens: e.tok, Clock: func() time.Time { return e.clock() },
-		HoldRatePerMin: rate, Log: slog.New(slog.NewTextHandler(e.logs, nil)),
+		HoldRatePerMin: rate, Errors: logreporter.New(slog.New(observe.RequestIDHandler{Handler: slog.NewTextHandler(e.logs, nil)})),
 	})
 	e.event("e1", now.Add(-time.Hour), eventAt, 10)
 	return e

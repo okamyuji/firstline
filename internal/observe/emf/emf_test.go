@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,12 +49,23 @@ func recv(t *testing.T, ch chan string) string {
 	}
 }
 
+func TestEmitLeavesOutAbsentSizes(t *testing.T) {
+	ln, lines := listen(t)
+	if err := emf.New(ln.Addr().String()).Emit(context.Background(), port.HealthSnapshot{QueueCap: 1}); err != nil {
+		t.Fatal(err)
+	}
+	line := recv(t, lines)
+	if strings.Contains(line, "wal_bytes") || strings.Contains(line, "db_bytes") || !strings.Contains(line, `"queue_cap":1`) {
+		t.Fatalf("line %s; want no size metrics", line)
+	}
+}
+
 func TestEmitSendsOneEMFLine(t *testing.T) {
 	ln, lines := listen(t)
 	sink := emf.New(ln.Addr().String())
 	snap := port.HealthSnapshot{
 		CommitWaitP99Ms: 12.5, SyncItemsPerSecMax5m: 40, QueueLen: 3, QueueCap: 8192,
-		QueueUsageAvg5m: 0.25, DroppedTotal: 2, WALBytes: 1000, DBBytes: 5000,
+		QueueUsageAvg5m: 0.25, DroppedTotal: 2, WALBytes: new(int64(1000)), DBBytes: new(int64(5000)),
 		LastReconcileAt: time.Unix(1700000000, 0), TLSCertDaysLeft: 30,
 	}
 

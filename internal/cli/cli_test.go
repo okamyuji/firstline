@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/okamyuji/firstline/internal/observe"
 )
 
 func testEnv(over map[string]string, stdin io.Reader, stderr io.Writer) env {
@@ -37,5 +39,15 @@ func TestSubcommandsFailOnBadConfig(t *testing.T) {
 		if code != 1 || !strings.Contains(stderr.String(), "FIRSTLINE_TOKEN_KEY") {
 			t.Errorf("%s: exit %d, %q; want 1 naming FIRSTLINE_TOKEN_KEY", cmd, code, stderr.String())
 		}
+	}
+}
+
+func TestRunLogsTheRequestIDAsJSON(t *testing.T) {
+	defer slog.SetDefault(slog.Default())
+	var stdout bytes.Buffer
+	Run([]string{"bogus"}, envOf(nil), strings.NewReader(""), &stdout, io.Discard)
+	slog.Default().ErrorContext(observe.WithRequestID(t.Context(), "r9"), "boom")
+	if got := stdout.String(); !strings.Contains(got, `"level":"ERROR"`) || !strings.Contains(got, `"request_id":"r9"`) {
+		t.Errorf("log line %q; want JSON with the request id", got)
 	}
 }

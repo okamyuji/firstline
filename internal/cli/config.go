@@ -122,6 +122,14 @@ func (c Config) dbTarget() string {
 	return c.DSN
 }
 
+// sqliteFile is the SQLite file whose sizes /healthz reports, or "" for a server store.
+func (c Config) sqliteFile() string {
+	if c.Store == "sqlite" {
+		return c.DBPath
+	}
+	return ""
+}
+
 // fanout sends each report to every configured reporter.
 type fanout []port.ErrorReporter
 

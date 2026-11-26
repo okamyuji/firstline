@@ -19,6 +19,7 @@ import (
 const (
 	minPasswordRunes = 12
 	maxPasswordRunes = 1024
+	maxTitleRunes    = 200
 	accessLogKeep    = 30 * 24 * time.Hour
 	sessionMaxAge    = 12 * time.Hour
 	sessionIdle      = 2 * time.Hour
@@ -199,10 +200,15 @@ func (s *Service) PurgeAccessLogs(_ context.Context) {
 	})
 }
 
+// validTitle wants visible text within the form's maxlength.
+func validTitle(t string) bool {
+	return strings.TrimSpace(t) != "" && utf8.RuneCountInString(t) <= maxTitleRunes
+}
+
 // CreateEvent stores the event and its event_sales row in one sync item, then
 // adds the capacity to the inventory.
 func (s *Service) CreateEvent(ctx context.Context, organizerID string, in EventInput) (string, error) {
-	if in.TitleJa == "" || in.TitleEn == "" || !in.StartsAt.Before(in.EndsAt) ||
+	if !validTitle(in.TitleJa) || !validTitle(in.TitleEn) || !in.StartsAt.Before(in.EndsAt) ||
 		in.Capacity < 1 || in.Capacity > maxCapacity || in.Price < 0 || in.Price > maxPrice ||
 		!in.SaleStartsAt.Before(in.StartsAt) {
 		return "", domain.ErrBadInput

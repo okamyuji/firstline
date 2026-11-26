@@ -416,6 +416,7 @@ func TestCreateEventAcceptsBoundaryValues(t *testing.T) {
 	}
 	in := validEvent()
 	in.Capacity, in.Price = 100_000, 10_000_000
+	in.TitleJa, in.TitleEn = strings.Repeat("題", 200), strings.Repeat("t", 200)
 	if _, err := o.sv.CreateEvent(t.Context(), o.orgID, in); err != nil {
 		t.Errorf("CreateEvent at the upper boundaries = %v; want nil", err)
 	}
@@ -426,6 +427,10 @@ func TestCreateEventValidatesInput(t *testing.T) {
 	for name, change := range map[string]func(*app.EventInput){
 		"empty ja title":  func(in *app.EventInput) { in.TitleJa = "" },
 		"empty en title":  func(in *app.EventInput) { in.TitleEn = "" },
+		"blank ja title":  func(in *app.EventInput) { in.TitleJa = " \t　" },
+		"blank en title":  func(in *app.EventInput) { in.TitleEn = "  " },
+		"long ja title":   func(in *app.EventInput) { in.TitleJa = strings.Repeat("題", 201) },
+		"long en title":   func(in *app.EventInput) { in.TitleEn = strings.Repeat("t", 201) },
 		"ends at start":   func(in *app.EventInput) { in.EndsAt = in.StartsAt },
 		"zero capacity":   func(in *app.EventInput) { in.Capacity = 0 },
 		"capacity over":   func(in *app.EventInput) { in.Capacity = 100_001 },

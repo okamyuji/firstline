@@ -4,8 +4,10 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"embed"
 	"errors"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
@@ -25,6 +27,8 @@ import (
 	"github.com/okamyuji/firstline/internal/auth"
 	"github.com/okamyuji/firstline/internal/domain"
 	"github.com/okamyuji/firstline/internal/i18n"
+	"github.com/okamyuji/firstline/internal/observe"
+	"github.com/okamyuji/firstline/internal/port"
 	"github.com/okamyuji/firstline/internal/store"
 	"github.com/okamyuji/firstline/internal/store/writer"
 )
@@ -52,7 +56,7 @@ type Deps struct {
 	Tokens         auth.Tokens
 	Clock          app.Clock
 	HoldRatePerMin int // 0 disables the limit
-	Log            *slog.Logger
+	Errors         port.ErrorReporter
 }
 
 type server struct {
@@ -61,8 +65,8 @@ type server struct {
 	holds *holdLimiter
 }
 
-// NewHandler returns the routes wrapped as security headers, then the NUL
-// check, then access log, then cross-origin protection.
+// NewHandler returns the routes wrapped as request id, then security headers,
+// then the NUL check, then access log, then cross-origin protection.
 func NewHandler(d Deps) http.Handler {
 	s := &server{Deps: d, pages: parsePages(), holds: &holdLimiter{limit: d.HoldRatePerMin, hits: map[string][]time.Time{}}}
 	mux := http.NewServeMux()
@@ -75,8 +79,41 @@ func NewHandler(d Deps) http.Handler {
 	s.adminRoutes(mux)
 	static, _ := fs.Sub(staticFS, "static") // cannot fail: "static" is a valid path
 	mux.Handle("GET /static/", http.StripPrefix("/static", http.FileServerFS(static)))
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { s.fail(w, r, domain.ErrNotFound) })
-	return headers(s.rejectNUL(s.accessLog(http.NewCrossOriginProtection().Handler(mux))))
+	mux.HandleFunc("/", s.noRoute(mux))
+	return withRequestID(headers(s.rejectNUL(s.accessLog(http.NewCrossOriginProtection().Handler(mux)))))
+}
+
+// noRoute answers 405 with Allow when the path has a route for another
+// method, and the 404 page otherwise. The catch-all "/" matches every method,
+// so the mux never answers 405 by itself.
+func (s *server) noRoute(mux *http.ServeMux) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var allow []string
+		for _, m := range []string{http.MethodGet, http.MethodPost} {
+			probe := r.Clone(r.Context())
+			probe.Method = m
+			if _, pattern := mux.Handler(probe); pattern != "/" {
+				allow = append(allow, m)
+			}
+		}
+		if len(allow) == 0 {
+			s.fail(w, r, domain.ErrNotFound)
+			return
+		}
+		if allow[0] == http.MethodGet {
+			allow = slices.Insert(allow, 1, http.MethodHead)
+		}
+		w.Header().Set("Allow", strings.Join(allow, ", "))
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+	}
+}
+
+// withRequestID gives the request a random id that every log line of the
+// request carries through the context.
+func withRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(observe.WithRequestID(r.Context(), rand.Text())))
+	})
 }
 
 // rejectNUL answers 400 before the access log: bun refuses a string with NUL
@@ -239,7 +276,7 @@ func (s *server) view(r *http.Request) view { return view{Lang: lang(r), tr: s.I
 func (s *server) render(w http.ResponseWriter, r *http.Request, status int, page, name string, v view) {
 	var buf bytes.Buffer
 	if err := s.pages[page].ExecuteTemplate(&buf, name, v); err != nil {
-		s.Log.Error("render template", "page", page, "path", r.URL.Path, "err", err)
+		s.Errors.Report(r.Context(), fmt.Errorf("render template %s: %w", page, err), slog.String("path", r.URL.Path))
 		http.Error(w, v.T(i18n.ErrInternal), http.StatusInternalServerError)
 		return
 	}
@@ -269,7 +306,7 @@ func (s *server) errorText(r *http.Request, v view, err error) (int, string) {
 			return st.code, v.T(i18n.ErrorKey(err))
 		}
 	}
-	s.Log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
+	s.Errors.Report(r.Context(), err, slog.String("method", r.Method), slog.String("path", r.URL.Path))
 	return http.StatusInternalServerError, v.T(i18n.ErrInternal)
 }
 
