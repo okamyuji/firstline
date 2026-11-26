@@ -1,8 +1,8 @@
-{{define "content"}}<p><a href="/admin/events/new">{{.T "admin.events.new"}}</a></p>
+{{define "content"}}<p class="actions"><a class="button" href="/admin/events/new">{{.T "admin.events.new"}}</a></p>
 {{if .Events}}<ul class="events">
-{{range .Events}}<li><a href="/admin/events/{{.ID}}">{{.Title}}</a>
-<span>{{.Date}}</span>
-<span>{{$.T "admin.create.sale_start"}} {{.SaleStart}}</span>
-<span>{{$.T "label.remaining"}} {{.Remaining}}</span></li>
+{{range .Events}}<li class="stub"><a class="stub-title" href="/admin/events/{{.ID}}">{{.Title}}</a>
+<span class="stub-date">{{.Date}}</span>
+<span class="stub-price">{{$.T "admin.create.sale_start"}} {{.SaleStart}}</span>
+<span class="badge is-open">{{$.T "label.remaining"}} {{.Remaining}}</span></li>
 {{end}}</ul>{{else}}<p>{{.T "list.empty"}}</p>{{end}}
-<form method="post" action="/admin/logout"><button type="submit">{{.T "admin.logout"}}</button></form>{{end}}
+<form class="logout" method="post" action="/admin/logout"><button type="submit">{{.T "admin.logout"}}</button></form>{{end}}

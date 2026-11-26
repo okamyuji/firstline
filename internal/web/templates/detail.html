@@ -1,9 +1,9 @@
-{{define "content"}}{{with .Event}}<dl>
+{{define "content"}}{{with .Event}}<dl class="facts">
 <dt>{{$.T "label.date"}}</dt><dd>{{.Date}}</dd>
 <dt>{{$.T "label.price"}}</dt><dd>{{.Price}}</dd>
 <dt>{{$.T "label.remaining"}}</dt><dd>{{.Remaining}}</dd>
 </dl>
-{{if not .Open}}<p class="badge">{{$.T "list.not_on_sale"}}</p>{{else if .SoldOut}}<p class="badge">{{$.T "list.sold_out"}}</p>{{else}}<form method="post" action="/events/{{.ID}}/purchases">
+{{if not .Open}}<p class="badge">{{$.T "list.not_on_sale"}}</p>{{else if .SoldOut}}<p class="badge">{{$.T "list.sold_out"}}</p>{{else}}<form class="panel" method="post" action="/events/{{.ID}}/purchases">
 <label>{{$.T "label.email"}} <input type="email" name="email" required maxlength="254" autocomplete="email"></label>
 <label>{{$.T "label.quantity"}} <input type="number" name="quantity" required min="1" max="4" value="1"></label>
 <p class="help">{{$.T "detail.quantity_help"}}</p>

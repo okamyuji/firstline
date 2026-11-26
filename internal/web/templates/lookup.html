@@ -1,4 +1,4 @@
-{{define "content"}}<form method="post" action="/lookup">
+{{define "content"}}<form class="panel" method="post" action="/lookup">
 <label>{{.T "label.email"}} <input type="email" name="email" required maxlength="254" autocomplete="email"></label>
 <label>{{.T "lookup.token"}} <input type="text" name="token" required maxlength="512" autocomplete="off"></label>
 <button type="submit">{{.T "lookup.submit"}}</button>

@@ -356,7 +356,7 @@ func TestListShowsSaleStateAtTheBoundaries(t *testing.T) {
 		if i < 0 {
 			t.Fatalf("no row for %s:\n%s", title, body)
 		}
-		i = strings.LastIndex(body[:i], "<li>")
+		i = strings.LastIndex(body[:i], "<li")
 		end := strings.Index(body[i:], "</li>")
 		return body[i : i+end]
 	}

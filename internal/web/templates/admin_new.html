@@ -1,4 +1,4 @@
-{{define "content"}}<form method="post" action="/admin/events">
+{{define "content"}}<form class="panel" method="post" action="/admin/events">
 <label>{{.T "admin.create.title_ja"}} <input type="text" name="title_ja" required maxlength="200" value="{{.Form.Get "title_ja"}}"></label>
 <label>{{.T "admin.create.title_en"}} <input type="text" name="title_en" required maxlength="200" value="{{.Form.Get "title_en"}}"></label>
 <label>{{.T "label.date"}} <input type="datetime-local" name="starts_at" required value="{{.Form.Get "starts_at"}}"></label>
