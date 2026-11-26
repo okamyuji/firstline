@@ -4,8 +4,12 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"net"
 	"strings"
 
 	"github.com/uptrace/bun"
@@ -86,6 +90,35 @@ func (s *Store) Select(ctx context.Context, db bun.IDB, dest any, name string, a
 	return db.NewRaw(q, args...).Scan(ctx, dest)
 }
 
+// Query runs the named query and returns its rows, for callers that read columns they do not know in advance.
+func (s *Store) Query(ctx context.Context, db bun.IDB, name string, args ...any) (*sql.Rows, error) {
+	q, err := s.query(name, len(args))
+	if err != nil {
+		return nil, err
+	}
+	return db.QueryContext(ctx, q, args...)
+}
+
+// CheckDurability runs check_durability, whose rows name each setting that lets a
+// commit return before it reaches the disk, and fails when there is any.
+func (s *Store) CheckDurability(ctx context.Context) error {
+	var rows []struct {
+		Name    string `bun:"name"`
+		Setting string `bun:"setting"`
+	}
+	if err := s.Select(ctx, s.Write, &rows, "check_durability"); err != nil {
+		return fmt.Errorf("check durability: %w", err)
+	}
+	if len(rows) > 0 {
+		bad := make([]string, len(rows))
+		for i, r := range rows {
+			bad[i] = r.Name + "=" + r.Setting
+		}
+		return fmt.Errorf("commits are not durable: %s", strings.Join(bad, ", "))
+	}
+	return nil
+}
+
 // Migrate runs schema.sql one statement at a time. The schema is idempotent
 // (IF NOT EXISTS), and each statement ends with ";" at the end of a line.
 // Lines starting with "--" are dropped, so a comment never ends a statement.
@@ -120,4 +153,11 @@ func splitStatements(schema string) []string {
 		out = append(out, rest)
 	}
 	return out
+}
+
+// IsConnLost reports whether err means the connection to a database server
+// broke, after which a commit's outcome is unknown.
+func IsConnLost(err error) bool {
+	_, isNet := errors.AsType[net.Error](err)
+	return isNet || errors.Is(err, driver.ErrBadConn) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }

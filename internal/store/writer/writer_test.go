@@ -11,6 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/okamyuji/firstline/internal/store"
+	"github.com/okamyuji/firstline/internal/store/mysql"
+	"github.com/okamyuji/firstline/internal/store/postgres"
+	"github.com/okamyuji/firstline/internal/store/servertest"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/sqlitedialect"
 	_ "modernc.org/sqlite"
@@ -30,6 +34,11 @@ func openDB(t *testing.T) *bun.DB {
 	}
 	db := bun.NewDB(sqldb, sqlitedialect.New())
 	t.Cleanup(func() { _ = db.Close() })
+	return createItems(t, db)
+}
+
+func createItems(t *testing.T, db *bun.DB) *bun.DB {
+	t.Helper()
 	if _, err := db.NewCreateTable().Model((*row)(nil)).Exec(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -434,9 +443,34 @@ func (c *commitCounter) AfterQuery(_ context.Context, e *bun.QueryEvent) {
 }
 
 func TestFailedItemsRollBackToTheirSavepoints(t *testing.T) {
+	testFailedItemsRollBack(t, openDB(t))
+}
+
+// PostgreSQL aborts the whole transaction on a failed statement, so the items after a
+// database error commit only if the writer rolls back to the item's savepoint.
+func TestFailedItemsRollBackOnServers(t *testing.T) {
+	for _, d := range []struct {
+		name   string
+		server func(*testing.T) *servertest.Server
+		open   func(context.Context, string) (*store.Store, error)
+	}{{"postgres", servertest.Postgres, postgres.Open}, {"mysql", servertest.MySQL, mysql.Open}} {
+		t.Run(d.name, func(t *testing.T) {
+			s, err := d.open(t.Context(), d.server(t).DB(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = s.Write.Close(); _ = s.Read.Close() })
+			testFailedItemsRollBack(t, createItems(t, s.Write))
+		})
+	}
+}
+
+// testFailedItemsRollBack fails odd items after their insert: items 1, 5, 9... with a Go
+// error, items 3, 7, 11... with the database's duplicate key error.
+func testFailedItemsRollBack(t *testing.T, db *bun.DB) {
 	c, log := newFakeClock(), &txLog{}
 	commits := &commitCounter{}
-	db := openDB(t).WithQueryHook(commits)
+	db = db.WithQueryHook(commits)
 	w := newWriter(t, db, opts(c, 8192))
 	applies := make([]Apply, 64)
 	for i := range applies {
@@ -446,6 +480,11 @@ func TestFailedItemsRollBackToTheirSavepoints(t *testing.T) {
 			applies[i] = func(ctx context.Context, tx bun.Tx) error {
 				if err := ins(ctx, tx); err != nil {
 					return err
+				}
+				if i%4 == 3 {
+					if err := ins(ctx, tx); err == nil {
+						return errors.New("duplicate insert succeeded")
+					}
 				}
 				return fmt.Errorf("item %d", i)
 			}

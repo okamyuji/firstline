@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/okamyuji/firstline/internal/migrate"
 	"github.com/okamyuji/firstline/internal/store"
 )
 
@@ -16,7 +17,7 @@ import (
 type Factory func(t *testing.T) *store.Store
 
 // Names lists every named statement a dialect must provide.
-var Names = []string{
+var Names = slices.Concat([]string{
 	"insert_organizer", "get_organizer_by_email",
 	"insert_event", "insert_event_sales", "get_event", "list_public_events", "list_events_by_organizer", "get_sales",
 	"insert_purchase", "hold_seats", "count_active_holds", "record_payment", "get_purchase", "set_state",
@@ -29,7 +30,18 @@ var Names = []string{
 	"inventory_counts",
 	"insert_session", "get_session", "touch_session", "delete_session", "delete_expired_sessions",
 	"insert_access_log",
+}, transferNames())
+
+func transferNames() []string {
+	var out []string
+	for _, t := range migrate.Tables {
+		out = append(out, "export_"+t, "import_"+t)
+	}
+	return out
 }
+
+// dialectOnly lists the files only some dialects have, so the name set leaves them out.
+var dialectOnly = []string{"setval_mail_outbox", "check_durability"}
 
 // Run runs every shared test against a fresh store from f.
 func Run(t *testing.T, f Factory) {
@@ -164,7 +176,9 @@ func testNames(t *testing.T, e *env) {
 	}
 	var got []string
 	for _, en := range entries {
-		got = append(got, strings.TrimSuffix(en.Name(), ".sql"))
+		if n := strings.TrimSuffix(en.Name(), ".sql"); !slices.Contains(dialectOnly, n) {
+			got = append(got, n)
+		}
 	}
 	want := append([]string{"schema"}, Names...)
 	slices.Sort(got)
