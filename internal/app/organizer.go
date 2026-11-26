@@ -52,7 +52,7 @@ func (s *Service) CreateOrganizer(ctx context.Context, email, password string) e
 	if a, err := mail.ParseAddress(email); err != nil || a.Address != email {
 		return domain.ErrBadInput
 	}
-	if utf8.RuneCountInString(password) < minPasswordRunes {
+	if !utf8.ValidString(password) || utf8.RuneCountInString(password) < minPasswordRunes {
 		return domain.ErrBadInput
 	}
 	hash, err := s.limited(ctx, func() (string, error) { return s.hashPassword(password) })

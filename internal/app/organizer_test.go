@@ -101,6 +101,8 @@ func TestCreateOrganizerValidatesInput(t *testing.T) {
 		{"not-an-address", orgPass},
 		{" a@example.com", orgPass},
 		{"a@example.com", "あいうえおかきくけこさ"},
+		// Invalid UTF-8 would hash bytes no form or socket client can send back.
+		{"a@example.com", "abcdefghijkl\xff"},
 	} {
 		if err := o.sv.CreateOrganizer(t.Context(), c.email, c.pw); !errors.Is(err, domain.ErrBadInput) {
 			t.Errorf("CreateOrganizer(%q, %q) = %v; want ErrBadInput", c.email, c.pw, err)
