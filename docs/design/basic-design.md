@@ -471,6 +471,8 @@ firstlineは環境変数で設定します。
 | `FIRSTLINE_ADMIN_SOCK` | 主催者の追加を受けるUnixソケットのパス | `/run/firstline/admin.sock` |
 | `FIRSTLINE_LOCK_PATH` | 書き込むプロセスを1つにするロックファイルのパス | `/var/lib/firstline/firstline.lock` |
 | `FIRSTLINE_HOLD_RATE_PER_MIN` | IPアドレスごとの1分あたりの保留の作成の上限。0で制限を外す | `10` |
+| `FIRSTLINE_FAKE_PAYMENT_DELAY` | 偽の決済が完了か失敗を通知するまでの時間。Goの`time.ParseDuration`の形で書く | `3s` |
+| `FIRSTLINE_FAKE_PAYMENT_OUTCOME` | 偽の決済の結果。`complete`、`fail` | `complete` |
 
 バイナリは次のサブコマンドを持ちます。
 

@@ -32,4 +32,6 @@ jobs:
         env:
           # A push to main has no PR base, so mutate the lines the push added.
           BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+          # The socket tests skip where binding a unix socket is not permitted; CI must run them.
+          FIRSTLINE_REQUIRE_SOCKET_TESTS: "1"
         run: bash scripts/check.sh
