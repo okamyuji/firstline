@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -122,4 +123,29 @@ func TestDBTarget(t *testing.T) {
 	if sqliteCfg.sqliteFile() != "/p.db" || pgCfg.sqliteFile() != "" {
 		t.Errorf("sqliteFile = %q, %q; want /p.db and none", sqliteCfg.sqliteFile(), pgCfg.sqliteFile())
 	}
+}
+
+// The example file is copied to /etc/firstline/env as is, so it must start and
+// hold every default it claims to show.
+func TestEnvExampleLoadsAndShowsTheDefaults(t *testing.T) {
+	b, err := os.ReadFile("../../deploy/firstline.env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := map[string]string{}
+	for line := range strings.Lines(string(b)) {
+		if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok && !strings.HasPrefix(k, "#") {
+			m[k] = v
+		}
+	}
+	got, err := LoadConfig(func(k string) string { return m[k] })
+	if err != nil {
+		t.Fatalf("LoadConfig(example) = %v", err)
+	}
+	defaults, err := LoadConfig(envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got.TokenKey, got.BaseURL = defaults.TokenKey, defaults.BaseURL
+	assertConfig(t, got, defaults)
 }

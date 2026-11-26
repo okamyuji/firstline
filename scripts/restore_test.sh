@@ -6,23 +6,42 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/restore_test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 
 mkdir "$tmp/bin" "$tmp/data"
+# Each fake logs its arguments. litestream and runuser also log the variable the
+# env files must set; mv logs and then moves for real so the backup can be checked.
+# FAKE_FAIL=<command> makes that command fail.
 for c in systemctl litestream runuser chown mv; do
 	cat >"$tmp/bin/$c" <<'FAKE'
 #!/usr/bin/env bash
-echo "$(basename "$0") $*" >>"$LOG"
+name=$(basename "$0")
+echo "$name $*" >>"$LOG"
+case $name in
+litestream) echo "env CF_ACCOUNT_ID=${CF_ACCOUNT_ID:-}" >>"$LOG" ;;
+runuser) echo "env FIRSTLINE_STORE=${FIRSTLINE_STORE:-} FIRSTLINE_DSN=${FIRSTLINE_DSN:-}" >>"$LOG" ;;
+esac
+[ "${FAKE_FAIL:-}" = "$name" ] && exit 1
 # FAKE_ACTIVE makes "systemctl is-active" report an active unit.
-if [ "$(basename "$0")" = systemctl ] && [ "${1:-}" = is-active ] && [ -n "${FAKE_ACTIVE:-}" ]; then exit 0; fi
-if [ "$(basename "$0")" = systemctl ] && [ "${1:-}" = is-active ]; then exit 3; fi
+if [ "$name" = systemctl ] && [ "${1:-}" = is-active ]; then [ -n "${FAKE_ACTIVE:-}" ] && exit 0 || exit 3; fi
+if [ "$name" = litestream ]; then echo restored >"${!#}"; fi
+if [ "$name" = mv ]; then exec /bin/mv "$@"; fi
 exit 0
 FAKE
 	chmod +x "$tmp/bin/$c"
 done
 echo "CF_ACCOUNT_ID=not-a-real-id" >"$tmp/litestream.env"
-echo "FIRSTLINE_STORE=sqlite" >"$tmp/env"
+# systemd's EnvironmentFile takes the value verbatim; a shell would cut it at & and expand $HOME.
+cat >"$tmp/env" <<'ENV'
+# comment
+FIRSTLINE_STORE=sqlite
+
+FIRSTLINE_DSN=postgres://u@h/db?sslmode=disable&application_name=fl$HOME
+ENV
 
 run() {
 	: >"$tmp/log"
-	touch "$tmp/data/firstline.db" "$tmp/data/firstline.db-wal" "$tmp/data/firstline.db-shm"
+	rm -rf "$tmp/data"
+	mkdir "$tmp/data"
+	echo original >"$tmp/data/firstline.db"
+	touch "$tmp/data/firstline.db-wal" "$tmp/data/firstline.db-shm"
 	LOG="$tmp/log" PATH="$tmp/bin:$PATH" FIRSTLINE_DATA_DIR="$tmp/data" \
 		FIRSTLINE_ENV_FILE="$tmp/env" FIRSTLINE_LITESTREAM_ENV_FILE="$tmp/litestream.env" \
 		bash "$root/scripts/restore.sh" "$@" >/dev/null
@@ -42,14 +61,23 @@ mv DATA/firstline.db-shm BACKUP/'
 run 2026-11-26T10:00:00Z
 want="$want_head
 litestream restore -config /etc/litestream.yml -integrity-check quick -timestamp 2026-11-26T10:00:00Z DATA/firstline.db
-chown firstline DATA/firstline.db DATA/firstline.db-shm DATA/firstline.db-wal
+env CF_ACCOUNT_ID=not-a-real-id
+chown firstline DATA/firstline.db
 systemctl start litestream
 runuser -u firstline -- firstline reconcile --since 2026-11-26T09:50:00Z
+env FIRSTLINE_STORE=sqlite FIRSTLINE_DSN=postgres://u@h/db?sslmode=disable&application_name=fl\$HOME
 systemctl start firstline"
-[ "$(normalize <"$tmp/log")" = "$want" ] || { diff <(echo "$want") <(normalize <"$tmp/log") >&2 || true; fail "call order differs (with timestamp)"; }
+normalize <"$tmp/log" >"$tmp/got"
+echo "$want" >"$tmp/want"
+diff "$tmp/want" "$tmp/got" >&2 || fail "call order differs (with timestamp)"
+# The backup directory is named by the UTC time and holds the old files.
+backups=$(cd "$tmp/data" && ls -d pre-restore-*)
+[[ $backups =~ ^pre-restore-[0-9]{8}T[0-9]{6}Z$ ]] || fail "backup directory name $backups"
+[ "$(cat "$tmp/data/$backups/firstline.db")" = original ] || fail "old database not in the backup"
+[ -e "$tmp/data/$backups/firstline.db-wal" ] && [ -e "$tmp/data/$backups/firstline.db-shm" ] || fail "WAL or SHM not in the backup"
 
-# An offset timestamp is converted to UTC.
-run 2026-11-26T19:00:00+09:00
+# An offset timestamp and a fraction are converted to UTC.
+run 2026-11-26T19:00:00.5+09:00
 grep -qx 'runuser -u firstline -- firstline reconcile --since 2026-11-26T09:50:00Z' "$tmp/log" || fail "offset timestamp not converted"
 
 # Without a timestamp: no -timestamp flag.
@@ -61,7 +89,23 @@ grep -Eq 'reconcile --since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$' "$tmp/log" |
 if FAKE_ACTIVE=1 run 2>/dev/null; then fail "ran while firstline was active"; fi
 grep -q '^mv ' "$tmp/log" && fail "files moved while firstline was active"
 
-# A bad timestamp stops the run before systemctl is called.
-if run not-a-time 2>/dev/null; then fail "bad timestamp accepted"; fi
-[ ! -s "$tmp/log" ] || fail "commands ran for a bad timestamp"
+# A timestamp that is not RFC 3339 stops the run before systemctl is called.
+for ts in not-a-time yesterday 2026-11-26 10:00 '2026-11-26 10:00:00' 2026-11-26T10:00:00 2026-13-01T00:00:00Z; do
+	if run "$ts" 2>/dev/null; then fail "bad timestamp $ts accepted"; fi
+	[ ! -s "$tmp/log" ] || fail "commands ran for the bad timestamp $ts"
+	[ "$(cat "$tmp/data/firstline.db")" = original ] || fail "database moved for the bad timestamp $ts"
+done
+
+# A failure after the move puts the old files back and starts both services again.
+for step in litestream chown runuser; do
+	if FAKE_FAIL=$step run 2026-11-26T10:00:00Z 2>/dev/null; then fail "a failing $step was not reported"; fi
+	[ "$(cat "$tmp/data/firstline.db")" = original ] || fail "old database not put back after $step failed"
+	[ -e "$tmp/data/firstline.db-wal" ] && [ -e "$tmp/data/firstline.db-shm" ] || fail "WAL or SHM not put back after $step failed"
+	[ "$(tail -n 1 "$tmp/log")" = 'systemctl start litestream firstline' ] || fail "services not restarted after $step failed"
+done
+# A missing env file fails inside load_env, which the ERR trap must still see.
+mv "$tmp/litestream.env" "$tmp/litestream.env.away"
+if run 2026-11-26T10:00:00Z 2>/dev/null; then fail "a missing env file was not reported"; fi
+mv "$tmp/litestream.env.away" "$tmp/litestream.env"
+[ "$(cat "$tmp/data/firstline.db")" = original ] || fail "old database not put back after the env file was missing"
 echo "restore_test: ok"
