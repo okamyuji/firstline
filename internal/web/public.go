@@ -61,8 +61,8 @@ type purchaseRow struct {
 }
 
 type eventView struct {
-	ID, Title, Date, Price string
-	Remaining              int
+	ID, Title, Date, Price, SaleStart string
+	Remaining, Capacity               int
 	// Open matches the sale window app.Hold enforces; SoldOut is checked only inside it.
 	Open, SoldOut bool
 }
@@ -90,7 +90,7 @@ func (v view) event(e eventRow, now time.Time) eventView {
 	at := now.UnixMilli()
 	return eventView{
 		ID: e.ID, Title: title, Date: app.JSTTime(v.Lang, e.StartsAt),
-		Price: v.T(i18n.PriceYen, app.Thousands(e.Price)), Remaining: e.Remaining,
+		Price: v.T(i18n.PriceYen, app.Thousands(e.Price)), Remaining: e.Remaining, Capacity: e.Capacity, SaleStart: app.JSTTime(v.Lang, e.SaleStartsAt),
 		Open: at >= e.SaleStartsAt && at < e.StartsAt, SoldOut: e.Remaining <= 0,
 	}
 }

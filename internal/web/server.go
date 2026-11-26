@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"sync"
 	"time"
@@ -70,6 +71,7 @@ func NewHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /purchases/{id}", s.status)
 	mux.HandleFunc("GET /lookup", s.lookupForm)
 	mux.HandleFunc("POST /lookup", s.lookup)
+	s.adminRoutes(mux)
 	static, _ := fs.Sub(staticFS, "static") // cannot fail: "static" is a valid path
 	mux.Handle("GET /static/", http.StripPrefix("/static", http.FileServerFS(static)))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { s.fail(w, r, domain.ErrNotFound) })
@@ -80,7 +82,7 @@ func NewHandler(d Deps) http.Handler {
 // parse error is a build defect and panics at startup.
 func parsePages() map[string]*template.Template {
 	pages := map[string]*template.Template{}
-	for _, p := range []string{"list", "detail", "purchase", "lookup", "error"} {
+	for _, p := range []string{"list", "detail", "purchase", "lookup", "error", "admin_login", "admin_events", "admin_new", "admin_sales"} {
 		pages[p] = template.Must(template.ParseFS(templateFS, "templates/layout.html", "templates/"+p+".html"))
 	}
 	return pages
@@ -194,6 +196,8 @@ type view struct {
 	Events             []eventView
 	Event              eventView
 	Purchase           purchaseView
+	Sales              salesRow
+	Form               url.Values
 	tr                 i18n.Translator
 }
 

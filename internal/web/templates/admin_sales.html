@@ -1,0 +1,9 @@
+{{define "content"}}<dl>
+<dt>{{.T "label.date"}}</dt><dd>{{.Event.Date}}</dd>
+<dt>{{.T "admin.create.capacity"}}</dt><dd id="capacity">{{.Event.Capacity}}</dd>
+<dt>{{.T "admin.sales.held"}}</dt><dd id="held">{{.Sales.Held}}</dd>
+<dt>{{.T "admin.sales.purchased"}}</dt><dd id="sold">{{.Sales.Sold}}</dd>
+<dt>{{.T "label.remaining"}}</dt><dd id="remaining">{{.Sales.Remaining}}</dd>
+<dt>{{.T "admin.sales.refunds"}}</dt><dd id="refunds">{{.Sales.Refunds}}</dd>
+</dl>
+<p><a href="/admin/events">{{.T "admin.events.heading"}}</a></p>{{end}}

@@ -1,0 +1,10 @@
+{{define "content"}}<form method="post" action="/admin/events">
+<label>{{.T "admin.create.title_ja"}} <input type="text" name="title_ja" required maxlength="200" value="{{.Form.Get "title_ja"}}"></label>
+<label>{{.T "admin.create.title_en"}} <input type="text" name="title_en" required maxlength="200" value="{{.Form.Get "title_en"}}"></label>
+<label>{{.T "label.date"}} <input type="datetime-local" name="starts_at" required value="{{.Form.Get "starts_at"}}"></label>
+<label>{{.T "admin.create.ends_at"}} <input type="datetime-local" name="ends_at" required value="{{.Form.Get "ends_at"}}"></label>
+<label>{{.T "admin.create.sale_start"}} <input type="datetime-local" name="sale_starts_at" required value="{{.Form.Get "sale_starts_at"}}"></label>
+<label>{{.T "admin.create.capacity"}} <input type="number" name="capacity" required min="1" value="{{.Form.Get "capacity"}}"></label>
+<label>{{.T "label.price"}} <input type="number" name="price" required min="0" value="{{.Form.Get "price"}}"></label>
+<button type="submit">{{.T "admin.create.submit"}}</button>
+</form>{{end}}

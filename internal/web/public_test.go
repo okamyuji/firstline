@@ -56,6 +56,7 @@ type env struct {
 	clock func() time.Time
 	at    time.Time
 	logs  *bytes.Buffer
+	svc   *app.Service
 	h     http.Handler
 }
 
@@ -90,6 +91,7 @@ func newEnv(t *testing.T, rate int) *env {
 		at: now, logs: &bytes.Buffer{}}
 	e.clock = func() time.Time { return e.at }
 	svc := app.New(app.Deps{Store: s, Writer: w, Inventory: e.inv, Payment: pay, Errors: nopReporter{}, Clock: func() time.Time { return e.clock() }})
+	e.svc = svc
 	e.h = web.NewHandler(web.Deps{
 		App: svc, Store: s, Writer: w, I18n: tr, Tokens: e.tok, Clock: func() time.Time { return e.clock() },
 		HoldRatePerMin: rate, Log: slog.New(slog.NewTextHandler(e.logs, nil)),

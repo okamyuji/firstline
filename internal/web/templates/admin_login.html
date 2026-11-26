@@ -1,0 +1,5 @@
+{{define "content"}}<form method="post" action="/admin/login">
+<label>{{.T "label.email"}} <input type="email" name="email" required maxlength="254" autocomplete="username"></label>
+<label>{{.T "admin.login.password"}} <input type="password" name="password" required maxlength="256" autocomplete="current-password"></label>
+<button type="submit">{{.T "admin.login.submit"}}</button>
+</form>{{end}}

@@ -57,6 +57,7 @@ const (
 	AdminTitleEn      = "admin.create.title_en"
 	AdminCapacity     = "admin.create.capacity"
 	AdminSaleStart    = "admin.create.sale_start"
+	AdminEndsAt       = "admin.create.ends_at"
 	AdminCreateSubmit = "admin.create.submit"
 	AdminSalesHeading = "admin.sales.heading"
 	AdminHeld         = "admin.sales.held"

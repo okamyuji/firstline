@@ -53,6 +53,7 @@ var jaStrings = map[string]string{
 	AdminTitleEn:      "題名（英語）",
 	AdminCapacity:     "定員",
 	AdminSaleStart:    "販売開始日時",
+	AdminEndsAt:       "終了日時",
 	AdminCreateSubmit: "作成する",
 	AdminSalesHeading: "販売状況",
 	AdminHeld:         "保留中",

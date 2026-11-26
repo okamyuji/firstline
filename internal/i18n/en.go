@@ -50,6 +50,7 @@ var enStrings = map[string]string{
 	AdminTitleEn:      "Title (English)",
 	AdminCapacity:     "Capacity",
 	AdminSaleStart:    "Sale start",
+	AdminEndsAt:       "End",
 	AdminCreateSubmit: "Create",
 	AdminSalesHeading: "Sales",
 	AdminHeld:         "On hold",
