@@ -100,8 +100,9 @@ func (wr *wiring) lifecycle() *lifecycle {
 		mail: func(ctx context.Context) error {
 			return countless(wr.svc.SendMail(ctx, wr.mailer, i18n.New(), auth.Tokens{Key: wr.cfg.TokenKey}, wr.cfg.BaseURL))
 		},
-		purge: func(ctx context.Context) { wr.svc.PurgeSessions(ctx) },
-		sweep: func(context.Context) { wr.svc.Throttle.Sweep(time.Now()) },
+		purge:     func(ctx context.Context) { wr.svc.PurgeSessions(ctx) },
+		purgeLogs: func(ctx context.Context) { wr.svc.PurgeAccessLogs(ctx) },
+		sweep:     func(context.Context) { wr.svc.Throttle.Sweep(time.Now()) },
 		sample: func(context.Context) {
 			s := wr.w.Stats()
 			wr.rec.SampleQueue(time.Now(), s.QueueLen, s.QueueCap)

@@ -28,7 +28,7 @@ var Names = slices.Concat([]string{
 	"list_due_holds", "list_refunding",
 	"insert_mail", "list_unsent_mail", "mark_mail_sent",
 	"inventory_counts",
-	"insert_session", "get_session", "touch_session", "delete_session", "delete_expired_sessions",
+	"insert_session", "get_session", "touch_session", "delete_session", "delete_expired_sessions", "delete_old_access_logs",
 	"insert_access_log",
 }, transferNames())
 
@@ -626,4 +626,8 @@ func testAccessLog(t *testing.T, e *env) {
 		t.Fatal(err)
 	}
 	eqSlice(t, "access logs", rows, []row{{"GET", "/events/x", 200, 12, 90}})
+
+	e.exec("insert_access_log", "GET", "/old", 200, int64(1), int64(89))
+	eq(t, "delete old access logs", e.exec("delete_old_access_logs", int64(90)), 1)
+	eq(t, "keep the cutoff row", e.exec("delete_old_access_logs", int64(90)), 0)
 }

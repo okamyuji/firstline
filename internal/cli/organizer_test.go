@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -259,5 +260,74 @@ func TestCreateOrganizerFailsWhenStdinFails(t *testing.T) {
 	e := testEnv(nil, iotest.ErrReader(errors.New("tty gone")), &stderr)
 	if code := run(context.Background(), []string{"create-organizer", "--email", "a@x.example"}, e); code != 1 {
 		t.Errorf("exit = %d; want 1", code)
+	}
+}
+
+var badPasswords = map[string]string{
+	"5000 runes":    strings.Repeat("あ", 5000) + "\n",
+	"invalid UTF-8": "long enough \xff\xfe\n",
+}
+
+func TestCreateOrganizerRejectsBadPasswordOnTheDirectPath(t *testing.T) {
+	for name, pw := range badPasswords {
+		t.Run(name, func(t *testing.T) {
+			dir := shortDir(t)
+			over := map[string]string{
+				"FIRSTLINE_ADMIN_SOCK": filepath.Join(dir, "missing.sock"),
+				"FIRSTLINE_LOCK_PATH":  filepath.Join(dir, "l"),
+				"FIRSTLINE_DB_PATH":    filepath.Join(dir, "db"),
+			}
+			if code, _ := runCreate(t, over, pw); code != 1 {
+				t.Errorf("exit = %d; want 1", code)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "db")); !os.IsNotExist(err) {
+				t.Errorf("database was written: %v", err)
+			}
+		})
+	}
+}
+
+func TestCreateOrganizerRejectsBadPasswordOnTheSocketPath(t *testing.T) {
+	requireUnixSockets(t)
+	for name, pw := range badPasswords {
+		t.Run(name, func(t *testing.T) {
+			sock, body := fakeSocket(t, http.StatusCreated)
+			if code, _ := runCreate(t, map[string]string{"FIRSTLINE_ADMIN_SOCK": sock}, pw); code != 1 {
+				t.Errorf("exit = %d; want 1", code)
+			}
+			select {
+			case got := <-body:
+				t.Errorf("serve was asked to create %q", got)
+			default:
+			}
+		})
+	}
+}
+
+func TestReadPasswordCapsTheLine(t *testing.T) {
+	longest := strings.Repeat("a", maxPasswordLine)
+	if got, err := readPassword(strings.NewReader(longest + "\r\n")); err != nil || got != longest {
+		t.Errorf("a %d-byte line: %d bytes, %v; want it whole", maxPasswordLine, len(got), err)
+	}
+	for _, in := range []string{longest + "a", longest + "a\n", strings.Repeat("a", 1<<20)} {
+		if got, err := readPassword(strings.NewReader(in)); !errors.Is(err, domain.ErrBadInput) {
+			t.Errorf("a %d-byte line: %d bytes, %v; want ErrBadInput", len(in), len(got), err)
+		}
+	}
+}
+
+func TestOrganizerHandlerTakesTheLongestPasswordInJSON(t *testing.T) {
+	// json.Marshal writes "<" as <, six bytes for one rune.
+	pw := strings.Repeat("<", 1024)
+	body, err := json.Marshal(organizerInput{Email: "a@x.example", Password: pw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	h := organizerHandler(creatorFunc(func(_ context.Context, _, p string) error { got = p; return nil }), reportTo(&recordingReporter{}))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/organizers", bytes.NewReader(body)))
+	if rr.Code != http.StatusCreated || got != pw {
+		t.Errorf("status = %d, password %d bytes; want 201 and the whole password", rr.Code, len(got))
 	}
 }

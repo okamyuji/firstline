@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -60,8 +61,8 @@ type server struct {
 	holds *holdLimiter
 }
 
-// NewHandler returns the routes wrapped as access log, then security headers,
-// then cross-origin protection.
+// NewHandler returns the routes wrapped as security headers, then the NUL
+// check, then access log, then cross-origin protection.
 func NewHandler(d Deps) http.Handler {
 	s := &server{Deps: d, pages: parsePages(), holds: &holdLimiter{limit: d.HoldRatePerMin, hits: map[string][]time.Time{}}}
 	mux := http.NewServeMux()
@@ -75,7 +76,19 @@ func NewHandler(d Deps) http.Handler {
 	static, _ := fs.Sub(staticFS, "static") // cannot fail: "static" is a valid path
 	mux.Handle("GET /static/", http.StripPrefix("/static", http.FileServerFS(static)))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { s.fail(w, r, domain.ErrNotFound) })
-	return s.accessLog(headers(http.NewCrossOriginProtection().Handler(mux)))
+	return headers(s.rejectNUL(s.accessLog(http.NewCrossOriginProtection().Handler(mux))))
+}
+
+// rejectNUL answers 400 before the access log: bun refuses a string with NUL
+// (schema/dialect.go errStringNul), so the path would fail every DB write.
+func (s *server) rejectNUL(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.ContainsRune(r.URL.Path, 0) {
+			s.fail(w, r, domain.ErrBadInput)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // parsePages pairs each page with the layout. The templates are embedded, so a
@@ -111,13 +124,28 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// maxLoggedPath bounds one access log row: a client chooses the path length.
+const maxLoggedPath = 1024
+
+// loggedPath cuts p to maxLoggedPath bytes without splitting a UTF-8 sequence.
+func loggedPath(p string) string {
+	if len(p) <= maxLoggedPath {
+		return p
+	}
+	n := maxLoggedPath
+	for n > 0 && !utf8.RuneStart(p[n]) {
+		n--
+	}
+	return p[:n]
+}
+
 // accessLog records URL.Path only: the query can carry a lookup token.
 func (s *server) accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := s.Clock()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
-		method, path, status := r.Method, r.URL.Path, sw.status
+		method, path, status := r.Method, loggedPath(r.URL.Path), sw.status
 		ms := s.Clock().Sub(start).Milliseconds()
 		s.Writer.Send(func(ctx context.Context, tx bun.Tx) error {
 			_, err := s.Store.Exec(ctx, tx, "insert_access_log", method, path, status, ms, start.UnixMilli())
@@ -172,24 +200,26 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-// parseForm caps the body and rejects invalid UTF-8 so it never reaches the DB.
+// parseForm caps the body and rejects invalid UTF-8 and NUL so neither reaches the DB.
 func parseForm(w http.ResponseWriter, r *http.Request) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 	if err := r.ParseForm(); err != nil {
 		return domain.ErrBadInput
 	}
 	for k, vs := range r.PostForm {
-		if !utf8.ValidString(k) {
+		if !cleanText(k) {
 			return domain.ErrBadInput
 		}
 		for _, v := range vs {
-			if !utf8.ValidString(v) {
+			if !cleanText(v) {
 				return domain.ErrBadInput
 			}
 		}
 	}
 	return nil
 }
+
+func cleanText(s string) bool { return utf8.ValidString(s) && !strings.ContainsRune(s, 0) }
 
 type view struct {
 	Lang, Title, Error string

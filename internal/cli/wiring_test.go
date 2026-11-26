@@ -201,6 +201,9 @@ func TestWiredJobsRunAgainstTheRealService(t *testing.T) {
 	if err := l.rebuild(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := wr.st.Write.ExecContext(t.Context(), "INSERT INTO access_logs (method, path, status, duration_ms, at) VALUES ('GET', '/old', 200, 1, 1)"); err != nil {
+		t.Fatal(err)
+	}
 	for _, j := range l.jobs() {
 		j.run(t.Context())
 	}
@@ -209,6 +212,10 @@ func TestWiredJobsRunAgainstTheRealService(t *testing.T) {
 	}
 	l.stopPayment()
 	l.stopWriter()
+	var old int
+	if err := wr.st.Read.QueryRowContext(t.Context(), "SELECT count(*) FROM access_logs WHERE path = '/old'").Scan(&old); err != nil || old != 0 {
+		t.Errorf("old access log rows %d (%v); want the daily purge to delete them", old, err)
+	}
 	if err := l.closeStore(); err != nil {
 		t.Fatal(err)
 	}

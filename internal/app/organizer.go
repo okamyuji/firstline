@@ -18,6 +18,8 @@ import (
 
 const (
 	minPasswordRunes = 12
+	maxPasswordRunes = 1024
+	accessLogKeep    = 30 * 24 * time.Hour
 	sessionMaxAge    = 12 * time.Hour
 	sessionIdle      = 2 * time.Hour
 	touchAfter       = 5 * time.Minute
@@ -45,15 +47,24 @@ type sessionRow struct {
 	LastSeenAt  int64  `bun:"last_seen_at"`
 }
 
-// CreateOrganizer validates the input as create-organizer specifies, hashes
-// the password and stores the organizer under the lower-cased email.
-func (s *Service) CreateOrganizer(ctx context.Context, email, password string) error {
+// CheckOrganizerInput is the create-organizer input check. The CLI runs it
+// before posting too, because json.Marshal would turn invalid UTF-8 into U+FFFD.
+func CheckOrganizerInput(email, password string) error {
 	// Requiring Address == input rejects the display-name and angle-bracket forms.
 	if a, err := mail.ParseAddress(email); err != nil || a.Address != email {
 		return domain.ErrBadInput
 	}
-	if !utf8.ValidString(password) || utf8.RuneCountInString(password) < minPasswordRunes {
+	if n := utf8.RuneCountInString(password); !utf8.ValidString(password) || n < minPasswordRunes || n > maxPasswordRunes {
 		return domain.ErrBadInput
+	}
+	return nil
+}
+
+// CreateOrganizer validates the input as create-organizer specifies, hashes
+// the password and stores the organizer under the lower-cased email.
+func (s *Service) CreateOrganizer(ctx context.Context, email, password string) error {
+	if err := CheckOrganizerInput(email, password); err != nil {
+		return err
 	}
 	hash, err := s.limited(ctx, func() (string, error) { return s.hashPassword(password) })
 	if err != nil {
@@ -174,6 +185,16 @@ func (s *Service) PurgeSessions(_ context.Context) {
 	s.Writer.Send(func(ctx context.Context, tx bun.Tx) error {
 		_, err := s.Store.Exec(ctx, tx, "delete_expired_sessions",
 			now.Add(-sessionMaxAge).UnixMilli(), now.Add(-sessionIdle).UnixMilli())
+		return err
+	})
+}
+
+// PurgeAccessLogs deletes access logs older than 30 days as an async item; the
+// loop calls it daily.
+func (s *Service) PurgeAccessLogs(_ context.Context) {
+	cutoff := s.Clock().Add(-accessLogKeep).UnixMilli()
+	s.Writer.Send(func(ctx context.Context, tx bun.Tx) error {
+		_, err := s.Store.Exec(ctx, tx, "delete_old_access_logs", cutoff)
 		return err
 	})
 }

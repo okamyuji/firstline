@@ -103,6 +103,7 @@ func TestCreateOrganizerValidatesInput(t *testing.T) {
 		{"a@example.com", "あいうえおかきくけこさ"},
 		// Invalid UTF-8 would hash bytes no form or socket client can send back.
 		{"a@example.com", "abcdefghijkl\xff"},
+		{"a@example.com", strings.Repeat("あ", 1025)},
 	} {
 		if err := o.sv.CreateOrganizer(t.Context(), c.email, c.pw); !errors.Is(err, domain.ErrBadInput) {
 			t.Errorf("CreateOrganizer(%q, %q) = %v; want ErrBadInput", c.email, c.pw, err)
@@ -119,6 +120,13 @@ func TestCreateOrganizerStoresLowerCaseEmailAndHash(t *testing.T) {
 	o.wantCount(1, "SELECT COUNT(*) FROM organizers WHERE email = 'bob@example.com' AND password_hash = 'h:abcdefghijkl' AND length(id) = 22")
 	if err := o.sv.CreateOrganizer(t.Context(), "BOB@example.com", "abcdefghijkl"); !errors.Is(err, domain.ErrDuplicateOrganizer) {
 		t.Errorf("second CreateOrganizer differing in case = %v; want ErrDuplicateOrganizer", err)
+	}
+}
+
+func TestCreateOrganizerTakesTheLongestPassword(t *testing.T) {
+	o := newOrgEnv(t)
+	if err := o.sv.CreateOrganizer(t.Context(), "c@example.com", strings.Repeat("あ", 1024)); err != nil {
+		t.Errorf("CreateOrganizer with 1024 runes = %v; want nil", err)
 	}
 }
 
@@ -362,6 +370,18 @@ func TestPurgeSessionsDeletesOnlyExpiredRows(t *testing.T) {
 	o.flush()
 	o.wantCount(2, "SELECT COUNT(*) FROM sessions")
 	o.wantCount(2, "SELECT COUNT(*) FROM sessions WHERE id_hash IN (?, ?)", idHash("old-but-valid"), idHash("idle-but-valid"))
+}
+
+func TestPurgeAccessLogsKeepsThirtyDays(t *testing.T) {
+	o := newOrgEnv(t)
+	cutoff := now.Add(-30 * 24 * time.Hour).UnixMilli()
+	for _, at := range []int64{cutoff - 1, cutoff, cutoff + 1} {
+		o.exec("INSERT INTO access_logs (method, path, status, duration_ms, at) VALUES ('GET', '/', 200, 1, ?)", at)
+	}
+	o.sv.PurgeAccessLogs(t.Context())
+	o.flush()
+	o.wantCount(2, "SELECT COUNT(*) FROM access_logs")
+	o.wantCount(1, "SELECT COUNT(*) FROM access_logs WHERE at = ?", cutoff)
 }
 
 func validEvent() app.EventInput {

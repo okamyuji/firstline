@@ -98,12 +98,13 @@ func newFakeLifecycle() (*lifecycle, *fakeParts) {
 			p.rec.add("reconcile")
 			return nil
 		},
-		expire:  step("expire"),
-		refunds: step("refunds"),
-		mail:    step("mail"),
-		purge:   func(context.Context) { p.rec.add("purge sessions") },
-		sweep:   func(context.Context) { p.rec.add("sweep throttle") },
-		sample:  func(context.Context) { p.rec.add("sample queue") },
+		expire:    step("expire"),
+		refunds:   step("refunds"),
+		mail:      step("mail"),
+		purge:     func(context.Context) { p.rec.add("purge sessions") },
+		purgeLogs: func(context.Context) { p.rec.add("purge access logs") },
+		sweep:     func(context.Context) { p.rec.add("sweep throttle") },
+		sample:    func(context.Context) { p.rec.add("sample queue") },
 		loops: []func(context.Context){func(ctx context.Context) {
 			<-ctx.Done()
 			p.rec.add("background stopped")
@@ -172,7 +173,7 @@ func TestStartupRunsInSpecOrder(t *testing.T) {
 		t.Errorf("startup reconcile since = %v; want [%v]", p.since, want)
 	}
 	if got := slices.Sorted(slices.Values(p.intervals)); !slices.Equal(got, []time.Duration{
-		time.Second, time.Second, 5 * time.Second, 30 * time.Second, 30 * time.Second, time.Minute, time.Hour}) {
+		time.Second, time.Second, 5 * time.Second, 30 * time.Second, 30 * time.Second, time.Minute, time.Hour, 24 * time.Hour}) {
 		t.Errorf("job intervals = %v", got)
 	}
 }
@@ -206,7 +207,8 @@ func TestJobsTable(t *testing.T) {
 	l, p := newFakeLifecycle()
 	want := map[string]time.Duration{
 		"expire holds": time.Second, "retry refunds": 30 * time.Second, "reconcile payments": 30 * time.Second,
-		"send mail": 5 * time.Second, "purge sessions": time.Hour, "sweep throttle": time.Minute, "sample queue": time.Second,
+		"send mail": 5 * time.Second, "purge sessions": time.Hour, "purge access logs": 24 * time.Hour,
+		"sweep throttle": time.Minute, "sample queue": time.Second,
 	}
 	jobs := l.jobs()
 	if len(jobs) != len(want) {
@@ -219,7 +221,7 @@ func TestJobsTable(t *testing.T) {
 		j.run(context.Background())
 	}
 	if got := p.rec.got(); !slices.Equal(got, []string{"expire", "refunds", "reconcile", "mail",
-		"purge sessions", "sweep throttle", "sample queue"}) {
+		"purge sessions", "purge access logs", "sweep throttle", "sample queue"}) {
 		t.Errorf("jobs ran %v", got)
 	}
 	if want := fixedNow.Add(-15 * time.Minute); len(p.since) != 1 || !p.since[0].Equal(want) {
@@ -236,7 +238,7 @@ func TestJobsReportErrors(t *testing.T) {
 		j.run(context.Background())
 	}
 	if got := p.rec.got(); !slices.Equal(got, []string{"check expire holds", "check retry refunds",
-		"check reconcile payments", "check send mail", "purge sessions", "sweep throttle", "sample queue"}) {
+		"check reconcile payments", "check send mail", "purge sessions", "purge access logs", "sweep throttle", "sample queue"}) {
 		t.Errorf("steps = %v", got)
 	}
 }

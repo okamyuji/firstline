@@ -30,6 +30,7 @@ const (
 	reconcileEvery = 30 * time.Second
 	mailEvery      = 5 * time.Second
 	purgeEvery     = time.Hour
+	purgeLogsEvery = 24 * time.Hour
 	sweepEvery     = time.Minute
 	sampleEvery    = time.Second
 	emfEvery       = 60 * time.Second
@@ -62,6 +63,7 @@ type lifecycle struct {
 	reconcile             func(context.Context, time.Time) error
 	expire, refunds, mail func(context.Context) error
 	purge, sweep, sample  func(context.Context)
+	purgeLogs             func(context.Context)
 	loops                 []func(context.Context) // background loops besides the jobs
 	listeners             []listener              // in step 8's order
 
@@ -79,6 +81,7 @@ func (l *lifecycle) jobs() []job {
 		}},
 		{"send mail", mailEvery, func(ctx context.Context) { l.check(ctx, "send mail", l.mail(ctx)) }},
 		{"purge sessions", purgeEvery, l.purge},
+		{"purge access logs", purgeLogsEvery, l.purgeLogs},
 		{"sweep throttle", sweepEvery, l.sweep},
 		{"sample queue", sampleEvery, l.sample},
 	}

@@ -14,10 +14,17 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/okamyuji/firstline/internal/app"
 	"github.com/okamyuji/firstline/internal/domain"
 )
 
-const maxOrganizerBody = 4 << 10
+const (
+	// 1024 runes are at most 4 KiB of UTF-8.
+	maxPasswordLine = 4 << 10
+	// json.Marshal escapes some runes to six bytes, so the body holds six
+	// times the longest password plus the email.
+	maxOrganizerBody = 16 << 10
+)
 
 type organizerInput struct {
 	Email    string `json:"email"`
@@ -71,6 +78,9 @@ func createOrganizerCmd(ctx context.Context, e env, cfg Config, args []string) i
 		return 1
 	}
 	pw, err := readPassword(e.stdin)
+	if err == nil {
+		err = app.CheckOrganizerInput(*email, pw)
+	}
 	if err != nil {
 		return exitCode(e.stderr, "create-organizer", err)
 	}
@@ -90,13 +100,18 @@ func checkCreated(status int, err error) error {
 	return err
 }
 
-// readPassword reads the first line of r, which may end at EOF.
+// readPassword reads the first line of r, which may end at EOF, and refuses a
+// line longer than maxPasswordLine without reading the rest.
 func readPassword(r io.Reader) (string, error) {
-	line, err := bufio.NewReader(r).ReadString('\n')
+	line, err := bufio.NewReader(io.LimitReader(r, int64(maxPasswordLine+len("\r\n")))).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", fmt.Errorf("read password: %w", err)
 	}
-	return strings.TrimRight(line, "\r\n"), nil
+	line = strings.TrimRight(line, "\r\n")
+	if len(line) > maxPasswordLine {
+		return "", domain.ErrBadInput
+	}
+	return line, nil
 }
 
 func postOrganizer(ctx context.Context, sock, email, pw string) (int, error) {
