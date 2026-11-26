@@ -12,4 +12,10 @@ var (
 	// ErrPaymentUnavailable means Payment.Start failed. The hold is released, or
 	// left to the expiry sweep when the release itself failed.
 	ErrPaymentUnavailable = errors.New("payment could not be started")
+
+	ErrBadInput           = errors.New("bad input")
+	ErrDuplicateOrganizer = errors.New("organizer email already exists")
+	ErrBadCredentials     = errors.New("wrong email or password")
+	ErrTooManyAttempts    = errors.New("too many failed logins")
+	ErrNoSession          = errors.New("no valid session")
 )

@@ -1,4 +1,5 @@
-// Package auth issues and verifies the signed tokens that let a buyer look up a purchase.
+// Package auth holds the signed tokens that let a buyer look up a purchase, and
+// the organizer's password hashing and login throttling.
 package auth
 
 import (

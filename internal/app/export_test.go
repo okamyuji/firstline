@@ -11,6 +11,11 @@ func (s *Service) Apply(ctx context.Context, purchaseID string, ev domain.Event,
 	return s.apply(ctx, purchaseID, ev, f)
 }
 
+// SetPasswordFuncs replaces Argon2id so tests neither pay its cost nor miss its calls.
+func (s *Service) SetPasswordFuncs(hash func(string) (string, error), verify func(hash, pw string) (bool, error)) {
+	s.hashPassword, s.verifyPassword = hash, verify
+}
+
 // MailFailures reports the consecutive send failures counted for a mail_outbox row.
 func (s *Service) MailFailures(id int64) int {
 	s.mailMu.Lock()
