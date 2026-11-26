@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-for tool in gofmt staticcheck golangci-lint gremlins gocyclo java; do
+for tool in gofmt staticcheck golangci-lint gremlins gocyclo docker; do
 	command -v "$tool" >/dev/null 2>&1 || {
 		echo "check.sh: required tool $tool not found in PATH" >&2
 		exit 1

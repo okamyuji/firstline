@@ -2,8 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if ! command -v java >/dev/null 2>&1; then
-	echo "tlc.sh: java not found in PATH; install a JDK (CI uses actions/setup-java)" >&2
+# TLC runs on the JVM; a pinned Temurin image keeps Java off the developer's machine.
+image=eclipse-temurin:21-jre@sha256:d77e090ae1f6970c047b443c6f0a6c1358b0426d44432bb5a7753408cd43de0d
+if ! command -v docker >/dev/null 2>&1; then
+	echo "tlc.sh: docker not found in PATH; TLC runs in $image" >&2
 	exit 1
 fi
 
@@ -22,7 +24,7 @@ if [ "$actual" != "$sha256" ]; then
 	exit 1
 fi
 
-# TLC extracts standard modules into java.io.tmpdir, which ignores TMPDIR
-# and is not writable under a sandbox. -metadir keeps TLC's states/
-# directory inside the gitignored tools/tla.
-java -Djava.io.tmpdir="${TMPDIR:-/tmp}" -cp "$jar" tlc2.TLC -workers auto -metadir tools/tla/states -config spec/Purchase.cfg spec/Purchase.tla
+# -metadir keeps TLC's states/ directory inside the gitignored tools/tla;
+# --user keeps those files owned by the caller.
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/w -w /w "$image" \
+	java -Djava.io.tmpdir=/tmp -cp "$jar" tlc2.TLC -workers auto -metadir tools/tla/states -config spec/Purchase.cfg spec/Purchase.tla

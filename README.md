@@ -105,4 +105,4 @@ bash scripts/check.sh
 - 実際のバイナリを動かすE2E
 - TLCによる状態遷移の検証
 
-PostgreSQLとMySQLの試験はtestcontainersでコンテナを起動するので、Dockerが要ります。TLCの検証にはJava 21を使います。
+PostgreSQLとMySQLの試験はtestcontainersでコンテナを起動するので、Dockerが要ります。TLCもJava 21入りのコンテナの中で動かすので、Javaを入れる必要はありません。
