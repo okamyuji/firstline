@@ -149,7 +149,7 @@ PostgreSQLとMySQLでは、書き込み用と読み取り用の`*bun.DB`を同�
 
 | DB | 設定 | 値 | 一次情報 |
 |---|---|---|---|
-| PostgreSQL | `synchronous_commit` | `on`（既定） | [WALの設定](https://www.postgresql.org/docs/current/runtime-config-wal.html) |
+| PostgreSQL | `synchronous_commit` | `on`（既定）か`remote_apply` | [WALの設定](https://www.postgresql.org/docs/current/runtime-config-wal.html) |
 | PostgreSQL | `fsync` | `on`（既定） | [WALの設定](https://www.postgresql.org/docs/current/runtime-config-wal.html) |
 | MySQL | `innodb_flush_log_at_trx_commit` | `1`（既定） | [InnoDBの設定](https://dev.mysql.com/doc/refman/8.0/en/innodb-parameters.html) |
 
@@ -484,7 +484,7 @@ firstlineは環境変数で設定します。
 |---|---|
 | `serve` | サービスとして動く |
 | `create-organizer --email <メールアドレス>` | 主催者を作る。パスワードは標準入力から読む。`serve`が動いていれば`FIRSTLINE_ADMIN_SOCK`へ追加を頼み、`serve`の書き込みゴルーチンが書く。`serve`が動いていなければロックを取って自分で書く |
-| `migrate-data --from <接続文字列> --to <接続文字列>` | 空の移行先へ表ごとに行を移し、行数と金額の合計を移行元と移行先で比べる。一致しなければ終了コード1で終わる。移行先がPostgreSQLなら、比べた後に、行がある場合だけ`mail_outbox.id`の採番を`setval`で最大値に合わせる（ADR-0003） |
+| `migrate-data --from <種類>:<場所> --to <種類>:<場所>` | `<種類>`は`sqlite`、`postgres`、`mysql`のどれかで、`<場所>`は`sqlite`ならファイルのパス、ほかは接続文字列を書く。移行元のSQLiteのファイルがなければ、ファイルを作らずに終了コード1で終わる。空の移行先へ表ごとに行を移し、行数と金額の合計を移行元と移行先で比べる。一致しなければ終了コード1で終わる。移行先がPostgreSQLなら、比べた後に、行がある場合だけ`mail_outbox.id`の採番を`setval`で最大値に合わせる（ADR-0003） |
 | `reconcile --since <時刻>` | 指定した時刻からの完了済みの決済を`Payment.Completed`で取り、完了通知と同じ処理に流す。払い戻しまで終えてから終わる。1件でも処理できなければ終了コード1で終わる |
 
 `serve`、`reconcile`、`migrate-data`と、`serve`が動いていないときの`create-organizer`は、どれも`FIRSTLINE_LOCK_PATH`を`flock`で取ってから自分の書き込みゴルーチンを始めます。`create-organizer`は`serve`が動いている間はロックを取らずに`serve`へ追加を頼むので、主催者を足しても販売は止まりません。`FIRSTLINE_ADMIN_SOCK`は所有者を`firstline`、権限を`0600`にしたUnixソケットで、`create-organizer`は`firstline`のユーザーで実行します。同じホストのほかのユーザーは主催者を作れません。ロックを取れなければ終了コード1で終わるので、WriteDBへ書くプロセスは常に1つです。

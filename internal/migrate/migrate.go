@@ -130,6 +130,13 @@ func scan(rows *sql.Rows, ncols, amount int) ([]any, int64, error) {
 	if err := rows.Scan(ptrs...); err != nil {
 		return nil, 0, err
 	}
+	// MySQL's text protocol returns every column as bytes, and bun writes
+	// []byte as binary (a BLOB or bytea). No table has a binary column.
+	for i, v := range row {
+		if b, ok := v.([]byte); ok {
+			row[i] = string(b)
+		}
+	}
 	if amount == -1 {
 		return row, 0, nil
 	}
@@ -137,13 +144,13 @@ func scan(rows *sql.Rows, ncols, amount int) ([]any, int64, error) {
 	return row, n, err
 }
 
-// asInt reads an integer column: MySQL's text protocol returns it as bytes.
+// asInt reads an integer column: MySQL's text protocol returns it as text.
 func asInt(v any) (int64, error) {
 	switch v := v.(type) {
 	case int64:
 		return v, nil
-	case []byte:
-		return strconv.ParseInt(string(v), 10, 64)
+	case string:
+		return strconv.ParseInt(v, 10, 64)
 	}
 	return 0, fmt.Errorf("amount is %T, want an integer", v)
 }

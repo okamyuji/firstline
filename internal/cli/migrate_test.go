@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -61,10 +62,17 @@ func TestMigrateDataRejectsBadStores(t *testing.T) {
 }
 
 func TestMigrateDataErrorHidesDSN(t *testing.T) {
-	dir := t.TempDir()
-	_, stderr := runMigrate(t, filepath.Join(dir, "l"), "--from", "oracle:user:secretpw@host", "--to", "sqlite:"+filepath.Join(dir, "x.db"))
-	if strings.Contains(stderr, "secretpw") {
-		t.Errorf("stderr leaks the DSN: %s", stderr)
+	for _, spec := range []string{
+		"oracle:user:secretpw@host",
+		"postgres:postgres://user:secretpw@host:badport/db",
+		"mysql:user:secretpw@tcp(host:3306/db",
+		"mysql:user:secretpw@tcp(host:3306)/db?parseTime=secretpw",
+	} {
+		dir := t.TempDir()
+		code, stderr := runMigrate(t, filepath.Join(dir, "l"), "--from", spec, "--to", "sqlite:"+filepath.Join(dir, "x.db"))
+		if code != 1 || strings.Contains(stderr, "secretpw") || strings.Contains(stderr, "host") {
+			t.Errorf("%s: exit %d, stderr leaks the DSN: %s", spec, code, stderr)
+		}
 	}
 }
 
@@ -78,5 +86,17 @@ func TestMigrateDataNeedsTheLock(t *testing.T) {
 	defer func() { _ = held.Close() }()
 	if code, _ := runMigrate(t, lock, "--from", "sqlite:"+filepath.Join(dir, "a.db"), "--to", "sqlite:"+filepath.Join(dir, "b.db")); code != 1 {
 		t.Errorf("exit = %d; want 1", code)
+	}
+}
+
+func TestMigrateDataMissingSourceCreatesNoFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "typo.db")
+	code, stderr := runMigrate(t, filepath.Join(dir, "l"), "--from", "sqlite:"+src, "--to", "sqlite:"+filepath.Join(dir, "x.db"))
+	if code != 1 || !strings.Contains(stderr, "no such file") {
+		t.Errorf("exit %d, stderr %q; want 1 and a missing-file error", code, stderr)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Errorf("the missing source was created: %v", err)
 	}
 }

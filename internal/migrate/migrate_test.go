@@ -332,12 +332,14 @@ func TestRunSQLiteToSQLite(t *testing.T) {
 		}
 	})
 
-	t.Run("non-integer amount", func(t *testing.T) {
-		bad := withFiles(t, src, map[string]string{"export_orphan_refunds": "SELECT payment_id, purchase_id, 'x' AS amount, state, updated_at FROM orphan_refunds"})
-		if err := migrate.Run(t.Context(), bad, openSQLite(t)); err == nil || !strings.Contains(err.Error(), "amount is string") {
-			t.Errorf("Run = %v, want an amount type error", err)
-		}
-	})
+	for amount, want := range map[string]string{"'x'": `parsing "x"`, "1.5": "amount is float64"} {
+		t.Run("non-integer amount "+amount, func(t *testing.T) {
+			bad := withFiles(t, src, map[string]string{"export_orphan_refunds": "SELECT payment_id, purchase_id, " + amount + " AS amount, state, updated_at FROM orphan_refunds"})
+			if err := migrate.Run(t.Context(), bad, openSQLite(t)); err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("Run = %v, want %q", err, want)
+			}
+		})
+	}
 
 	t.Run("source read error", func(t *testing.T) {
 		bad := withFiles(t, src, map[string]string{"export_events": "SELECT nope FROM events"})

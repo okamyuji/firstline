@@ -43,6 +43,23 @@ func TestPostgres(t *testing.T) {
 		}
 	})
 
+	t.Run("synchronous_commit remote_apply", func(t *testing.T) {
+		// remote_apply waits for the local flush too, and for a standby when one is named.
+		s, err := postgres.Open(t.Context(), srv.DB(t)+"&synchronous_commit=remote_apply")
+		if err != nil {
+			t.Fatalf("Open = %v, want nil", err)
+		}
+		_ = s.Write.Close()
+		_ = s.Read.Close()
+	})
+
+	t.Run("malformed DSN hides the password", func(t *testing.T) {
+		_, err := postgres.Open(t.Context(), "postgres://user:secretpw@host:badport/db")
+		if err == nil || strings.Contains(err.Error(), "secretpw") {
+			t.Errorf("Open = %v, want an error without the DSN", err)
+		}
+	})
+
 	t.Run("error kinds", func(t *testing.T) {
 		s := migrated(t)
 		ctx := t.Context()

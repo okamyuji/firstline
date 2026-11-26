@@ -7,7 +7,6 @@ import (
 	"database/sql/driver"
 	"embed"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/okamyuji/firstline/internal/store"
@@ -33,7 +32,8 @@ func Open(ctx context.Context, dsn string) (*store.Store, error) {
 	// OpenConnector reports a malformed DSN as an error; pgdriver.WithDSN would panic.
 	c, err := pgdriver.NewDriver().OpenConnector(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open postgres: %w", err)
+		// The parse error quotes the DSN (net/url *url.Error), password included.
+		return nil, errors.New("open postgres: malformed DSN")
 	}
 	s := &store.Store{Write: pool(c, 1), Read: pool(c, readConns), SQL: sqlFiles, IsIOError: isIOError, IsUnique: isUnique}
 	if err := s.CheckDurability(ctx); err != nil {

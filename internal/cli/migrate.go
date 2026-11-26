@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/okamyuji/firstline/internal/migrate"
@@ -28,6 +29,12 @@ func migrateData(ctx context.Context, lockPath, from, to string) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
+	// Opening a SQLite path creates the file, which would hide a typo.
+	if path, ok := strings.CutPrefix(from, "sqlite:"); ok {
+		if _, err := os.Stat(path); err != nil {
+			return fmt.Errorf("open source: %w", err)
+		}
+	}
 	src, err := openSpec(ctx, from)
 	if err != nil {
 		return fmt.Errorf("open source: %w", err)

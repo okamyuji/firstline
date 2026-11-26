@@ -7,7 +7,6 @@ import (
 	"database/sql/driver"
 	"embed"
 	"errors"
-	"fmt"
 
 	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/okamyuji/firstline/internal/store"
@@ -34,7 +33,8 @@ func Open(ctx context.Context, dsn string) (*store.Store, error) {
 		c, err = mysqldriver.NewConnector(cfg)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("open mysql: %w", err)
+		// ParseDSN errors can quote a parameter value from the DSN.
+		return nil, errors.New("open mysql: malformed DSN")
 	}
 	s := &store.Store{Write: pool(c, 1), Read: pool(c, readConns), SQL: sqlFiles, IsIOError: isIOError, IsUnique: isUnique}
 	if err := s.CheckDurability(ctx); err != nil {
