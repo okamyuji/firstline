@@ -42,11 +42,11 @@ if [ -z "$pkgs" ]; then
 fi
 
 echo "== go vet"
-go vet ./...
+go vet -tags e2e ./...
 echo "== staticcheck"
-staticcheck ./...
+staticcheck -tags e2e ./...
 echo "== golangci-lint"
-golangci-lint run
+golangci-lint run --build-tags e2e
 echo "== go build"
 go build ./...
 
@@ -59,7 +59,7 @@ for line in 'TimeoutStopSec=30' 'RuntimeDirectory=firstline' 'LogsDirectory=firs
 	}
 done
 if command -v shellcheck >/dev/null 2>&1; then
-	shellcheck scripts/restore.sh scripts/restore_test.sh deploy/firstline-cert-deploy
+	shellcheck scripts/restore.sh scripts/restore_test.sh scripts/e2e.sh deploy/firstline-cert-deploy
 else
 	echo "check.sh: shellcheck not found; skipped" >&2
 fi
@@ -99,6 +99,9 @@ echo "== doclint"
 (cd tools/doclint && go vet ./... && golangci-lint run &&
 	go test -race -count=1 -coverprofile=cover.out ./... && cover_gate cover.out &&
 	../../scripts/crap.sh cover.out && ../../scripts/gremlins-gate.sh && go run . ../../docs)
+
+echo "== e2e"
+bash scripts/e2e.sh
 
 echo "== tlc"
 bash scripts/tlc.sh
