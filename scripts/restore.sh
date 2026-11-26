@@ -54,11 +54,10 @@ fi
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 backup=$data_dir/pre-restore-$stamp
-# rollback puts the moved files back and starts the services again, so a failed
-# restore leaves the host as it was. Litestream stops first because it may
-# already replicate the restored file. The restored files are kept aside, as a
-# failed reconcile may already have written to them. With no old database (a
-# new host) the services stay stopped, or serve would start on an empty one.
+# rollback runs for a failure in steps 2-4. It puts the moved files back and
+# starts the services again, so the host is as it was. The partly restored
+# files are kept aside. With no old database (a new host) the services stay
+# stopped, or serve would start on an empty one.
 rollback() {
 	trap - ERR
 	echo "restore.sh: failed; putting $backup back" >&2
@@ -97,6 +96,16 @@ litestream "${args[@]}" "$db"
 
 echo "step 4: set the owner of the restored files to firstline"
 chown firstline "$db"*
+
+# From here Litestream replicates the restored file, and the operator chose to
+# leave the old one, so a failure keeps the restored database and firstline stopped.
+trap - ERR
+stuck() {
+	echo "restore.sh: failed after the restore; firstline stays stopped and $backup keeps the old files." >&2
+	# systemd-run reads the env file the way the unit does; a bare shell would not have it.
+	echo "restore.sh: fix the cause, then run: systemctl start litestream && systemd-run --wait --pipe -p User=firstline -p EnvironmentFile=$env_file /usr/local/bin/firstline reconcile --since $since && systemctl start firstline" >&2
+}
+trap stuck ERR
 
 echo "step 5: start the litestream service"
 systemctl start litestream

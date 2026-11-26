@@ -99,9 +99,9 @@ for ts in not-a-time yesterday 2026-11-26 10:00 '2026-11-26 10:00:00' 2026-11-26
 	[ "$(cat "$tmp/data/firstline.db")" = original ] || fail "database moved for the bad timestamp $ts"
 done
 
-# A failure after the move stops Litestream, keeps the restored files aside,
-# puts the old files back and starts both services again.
-for step in litestream chown runuser; do
+# A failure before Litestream starts on the restored file stops Litestream,
+# keeps the restored files aside, puts the old files back and starts both services again.
+for step in litestream chown; do
 	if FAKE_FAIL=$step run 2026-11-26T10:00:00Z 2>/dev/null; then fail "a failing $step was not reported"; fi
 	[ "$(cat "$tmp/data/firstline.db")" = original ] || fail "old database not put back after $step failed"
 	[ -e "$tmp/data/firstline.db-wal" ] && [ -e "$tmp/data/firstline.db-shm" ] || fail "WAL or SHM not put back after $step failed"
@@ -113,6 +113,16 @@ systemctl start litestream firstline' ] || fail "after $step failed: $after; wan
 		[ "$(cat "$tmp/data"/failed-restore-*/firstline.db)" = restored ] || fail "restored database not kept after $step failed"
 	fi
 done
+
+# A failed reconcile keeps the restored database in place: the operator chose to
+# leave the old one, so it stays in the backup and firstline stays stopped.
+if FAKE_FAIL=runuser run 2026-11-26T10:00:00Z 2>"$tmp/err"; then fail "a failing reconcile was not reported"; fi
+grep -q "systemd-run --wait --pipe -p User=firstline -p EnvironmentFile=$tmp/env /usr/local/bin/firstline reconcile --since 2026-11-26T09:50:00Z" "$tmp/err" || fail "the retry command is missing the env file: $(cat "$tmp/err")"
+[ "$(cat "$tmp/data/firstline.db")" = restored ] || fail "restored database replaced after reconcile failed"
+[ "$(cat "$tmp/data"/pre-restore-*/firstline.db)" = original ] || fail "old database left the backup after reconcile failed"
+after=$(awk '$1 == "runuser" { f = 1; next } f && $1 == "systemctl"' "$tmp/log")
+[ -z "$after" ] || fail "after reconcile failed: $after; want no service change"
+ls -d "$tmp/data"/failed-restore-* >/dev/null 2>&1 && fail "restored files moved aside after reconcile failed"
 
 # With no old database there is nothing to go back to: the services stay stopped.
 if NO_DB=1 FAKE_FAIL=litestream run 2026-11-26T10:00:00Z 2>/dev/null; then fail "a failing restore on a new host was not reported"; fi

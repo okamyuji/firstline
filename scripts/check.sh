@@ -13,8 +13,23 @@ done
 # the PostgreSQL and MySQL tests would skip; pass the context's endpoint instead.
 if [ -z "${DOCKER_HOST:-}" ] && command -v docker >/dev/null 2>&1; then
 	DOCKER_HOST=$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null) || DOCKER_HOST=
-	[ -n "$DOCKER_HOST" ] && export DOCKER_HOST || unset DOCKER_HOST
+	if [ -n "$DOCKER_HOST" ]; then export DOCKER_HOST; else unset DOCKER_HOST; fi
 fi
+
+# A killed test process leaves its PostgreSQL or MySQL container running
+# (Ryuk is off), and the leftovers use up the VM's AIO slots until MySQL fails
+# to start. Remove only the containers labeled by internal/store/servertest.
+sweep_test_containers() {
+	command -v docker >/dev/null 2>&1 || return 0
+	local ids
+	ids=$(docker ps -aq --filter label=firstline.servertest=true 2>/dev/null) || return 0
+	if [ -n "$ids" ]; then
+		# shellcheck disable=SC2086 # one id per word
+		docker rm -f $ids >/dev/null
+	fi
+}
+sweep_test_containers
+trap sweep_test_containers EXIT
 
 # gremlins --diff mutates only what git diff shows, which leaves out untracked files.
 untracked=$(git ls-files --others --exclude-standard -- '*.go')
@@ -52,7 +67,7 @@ go build ./...
 
 echo "== deploy"
 if command -v shellcheck >/dev/null 2>&1; then
-	shellcheck scripts/restore.sh scripts/restore_test.sh scripts/deploy_test.sh scripts/e2e.sh deploy/firstline-cert-deploy
+	shellcheck scripts/*.sh deploy/firstline-cert-deploy
 else
 	echo "check.sh: shellcheck not found; skipped" >&2
 fi
