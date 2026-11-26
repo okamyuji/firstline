@@ -80,7 +80,10 @@ func Postgres(t *testing.T) *Server {
 func MySQL(t *testing.T) *Server {
 	t.Helper()
 	start(t)
-	ctr, err := tcmysql.Run(t.Context(), "mysql:8.4", tcmysql.WithUsername("root"), tcmysql.WithPassword(rand.Text()))
+	// The defaults reserve several hundred MB each; three packages start MySQL
+	// at once under go test ./..., which OOM-killed containers on an 8 GB VM.
+	ctr, err := tcmysql.Run(t.Context(), "mysql:8.4", tcmysql.WithUsername("root"), tcmysql.WithPassword(rand.Text()),
+		testcontainers.WithCmdArgs("--performance-schema=OFF", "--innodb-buffer-pool-size=32M"))
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)
