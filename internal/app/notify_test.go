@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -196,6 +197,69 @@ func TestCompletedWritesMissingPaymentID(t *testing.T) {
 		t.Errorf("purchase = %+v, want purchased with payment_id pay-late and the checkout URL kept", r)
 	}
 	e.wantCount(1, "SELECT COUNT(*) FROM billing_logs WHERE payment_id = 'pay-late'")
+}
+
+// refundingPaths are the rows of the transition table where a completion moves
+// the purchase to refunding. Each leaves a 2-seat purchase ready for that
+// completion and returns when the payment completed.
+var refundingPaths = map[string]func(e *env, id, pid string) time.Time{
+	"late": func(*env, string, string) time.Time { return expiresAt },
+	"expired": func(e *env, id, _ string) time.Time {
+		e.clock = expiresAt.Add(domain.ExpiryGrace)
+		if err := e.svc().Apply(e.t.Context(), id, domain.EvExpire, domain.Facts{}); err != nil {
+			e.t.Fatal(err)
+		}
+		return now
+	},
+	"released": func(e *env, id, pid string) time.Time {
+		if err := e.svc().Failed(e.t.Context(), id, pid); err != nil {
+			e.t.Fatal(err)
+		}
+		return now
+	},
+}
+
+// A purchase whose Start record failed has no payment_id; the refund retry
+// selects only rows with one, so the completion must write it on these rows too.
+func TestCompletionIntoRefundingWritesMissingPaymentIDAndIsRefunded(t *testing.T) {
+	for name, path := range refundingPaths {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, inventory.NewMemory())
+			id, pid := e.heldPurchase("a@x", 2)
+			at := path(e, id, pid)
+			e.exec("UPDATE purchases SET payment_id = NULL WHERE id = ?", id)
+			if err := e.complete(id, "pay-late", at, 2*price); err != nil {
+				t.Fatal(err)
+			}
+			if r := e.stateRow(id); r.State != "refunding" || r.PaymentID.String != "pay-late" {
+				t.Fatalf("purchase = %+v, want refunding with payment_id pay-late", r)
+			}
+			fp := &funcPayment{Payment: e.pay}
+			e.deps.Payment = fp
+			if n, err := e.svc().RetryRefunds(t.Context()); n != 1 || err != nil || !slices.Equal(fp.refunded, []string{"pay-late"}) {
+				t.Errorf("RetryRefunds = %d, %v, refunded %v; want 1, nil, [pay-late]", n, err, fp.refunded)
+			}
+			if r := e.stateRow(id); r.State != "refunded" {
+				t.Errorf("state = %q, want refunded", r.State)
+			}
+		})
+	}
+}
+
+func TestCompletionIntoRefundingReportsAmountMismatch(t *testing.T) {
+	for name, path := range refundingPaths {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, inventory.NewMemory())
+			id, pid := e.heldPurchase("a@x", 2)
+			if err := e.complete(id, pid, path(e, id, pid), 2*price+1); err != nil {
+				t.Fatal(err)
+			}
+			if r := e.stateRow(id); r.State != "refunding" {
+				t.Errorf("state = %q, want refunding", r.State)
+			}
+			e.wantReports(1)
+		})
+	}
 }
 
 func TestCompletedKeepsStoredPaymentID(t *testing.T) {

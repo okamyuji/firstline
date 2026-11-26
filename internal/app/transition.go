@@ -14,9 +14,6 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// maxApplyAttempts bounds the re-reads after set_state matched no row.
-const maxApplyAttempts = 3
-
 type applied struct {
 	p purchaseRow
 	d domain.Decision
@@ -52,30 +49,29 @@ func (s *Service) transition(ctx context.Context, purchaseID string, ev domain.E
 func (s *Service) writeTransition(ctx context.Context, tx bun.Tx, id string, ev domain.Event, f domain.Facts, c *port.Completion) (applied, error) {
 	now := s.Clock()
 	f.Now = now
-	for range maxApplyAttempts {
-		var p purchaseRow
-		err := s.Store.Select(ctx, tx, &p, "get_purchase", id)
-		if errors.Is(err, sql.ErrNoRows) {
-			return applied{}, s.noPurchase(ctx, tx, id, ev, c)
-		}
-		if err != nil {
-			return applied{}, err
-		}
-		f.ExpiresAt = time.UnixMilli(p.ExpiresAt)
-		d, err := domain.Next(domain.State(p.State), ev, f)
-		if err != nil || !d.Changed {
-			return applied{p, d}, err
-		}
-		n, err := affected(s.Store.Exec(ctx, tx, "set_state", string(d.To), now.UnixMilli(), id, p.State))
-		if err != nil {
-			return applied{}, err
-		}
-		if n == 0 {
-			continue // the state moved after the read; look the table up again
-		}
-		return applied{p, d}, s.writeEffects(ctx, tx, p, d, c, now.UnixMilli())
+	var p purchaseRow
+	err := s.Store.Select(ctx, tx, &p, "get_purchase", id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return applied{}, s.noPurchase(ctx, tx, id, ev, c)
 	}
-	return applied{}, fmt.Errorf("purchase %s: state kept changing over %d attempts", id, maxApplyAttempts)
+	if err != nil {
+		return applied{}, err
+	}
+	f.ExpiresAt = time.UnixMilli(p.ExpiresAt)
+	d, err := domain.Next(domain.State(p.State), ev, f)
+	if err != nil || !d.Changed {
+		return applied{p, d}, err
+	}
+	n, err := affected(s.Store.Exec(ctx, tx, "set_state", string(d.To), now.UnixMilli(), id, p.State))
+	if err != nil {
+		return applied{}, err
+	}
+	// The read and this update run in one item on the single writer goroutine,
+	// so no other transition can move the state in between; 0 rows is a defect.
+	if n == 0 {
+		return applied{}, fmt.Errorf("purchase %s: state %s changed under the writer: %w", id, p.State, domain.ErrInvalidTransition)
+	}
+	return applied{p, d}, s.writeEffects(ctx, tx, p, d, c, now.UnixMilli())
 }
 
 // noPurchase handles a notice for a purchase with no record: a completion

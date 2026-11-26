@@ -195,6 +195,7 @@ func TestHoldCreatesHeldPurchase(t *testing.T) {
 	if held, remaining := e.sales(); held != 2 || remaining != capacity-2 {
 		t.Errorf("event_sales held = %d, remaining = %d; want 2, %d", held, remaining, capacity-2)
 	}
+	e.wantCount(1, "SELECT COUNT(*) FROM purchases WHERE id = 'p1' AND updated_at = ?", now.UnixMilli())
 	if n := e.count("SELECT COUNT(*) FROM mail_outbox WHERE purchase_id = 'p1' AND kind = 'hold' AND lang = 'en'"); n != 1 {
 		t.Errorf("hold mail rows = %d, want 1", n)
 	}
@@ -217,18 +218,23 @@ func TestHoldDefaultIDIsRandomBase64URL(t *testing.T) {
 	}
 }
 
+// The DB inventory does not check the quantity, so with it a missing lower
+// bound would let hold_seats add seats for a negative quantity.
 func TestHoldQuantityBounds(t *testing.T) {
-	for _, tc := range []struct {
-		qty  int
-		want error
-	}{{0, domain.ErrBadQuantity}, {1, nil}, {4, nil}, {5, domain.ErrBadQuantity}} {
-		e := newEnv(t, inventory.NewMemory())
-		_, err := e.hold("a@x", tc.qty)
-		if !errors.Is(err, tc.want) || (tc.want == nil) != (err == nil) {
-			t.Errorf("quantity %d: err = %v, want %v", tc.qty, err, tc.want)
-		}
-		if tc.want != nil {
-			e.wantRemaining(capacity)
+	for name, inv := range map[string]func() port.Inventory{"memory": inventory.NewMemory, "db": inventory.NewDB} {
+		for _, tc := range []struct {
+			qty  int
+			want error
+		}{{-1, domain.ErrBadQuantity}, {0, domain.ErrBadQuantity}, {1, nil}, {4, nil}, {5, domain.ErrBadQuantity}} {
+			e := newEnv(t, inv())
+			_, err := e.hold("a@x", tc.qty)
+			if !errors.Is(err, tc.want) || (tc.want == nil) != (err == nil) {
+				t.Errorf("%s, quantity %d: err = %v, want %v", name, tc.qty, err, tc.want)
+			}
+			if tc.want != nil {
+				e.wantCount(0, "SELECT COUNT(*) FROM purchases")
+				e.wantSales(salesRow{Remaining: capacity})
+			}
 		}
 	}
 }
@@ -356,6 +362,7 @@ func TestHoldStartFailureReleases(t *testing.T) {
 	if p := e.purchase("p1"); p.State != "released" || p.PaymentID != nil {
 		t.Errorf("purchase = %+v, want released without payment_id", p)
 	}
+	e.wantCount(1, "SELECT COUNT(*) FROM purchases WHERE id = 'p1' AND updated_at = ?", e.clock.UnixMilli())
 	if held, remaining := e.sales(); held != 0 || remaining != capacity {
 		t.Errorf("event_sales held = %d, remaining = %d", held, remaining)
 	}
@@ -451,5 +458,39 @@ func TestHoldRecordPaymentConflicts(t *testing.T) {
 				t.Errorf("reports = %d, want %d", got, tc.reports)
 			}
 		})
+	}
+}
+
+// holdCanceledDuringStart cancels the request context inside Start, as a buyer
+// who drops the connection does, and returns the purchase left behind.
+func holdCanceledDuringStart(t *testing.T, startErr error) purchase {
+	t.Helper()
+	e := newEnv(t, inventory.NewMemory())
+	e.deps.NewID = func() string { return "p1" }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	e.deps.Payment = stubPayment{start: func(context.Context, string, int) (string, string, error) {
+		cancel()
+		return "pay-1", "https://pay.example/c/p1", startErr
+	}}
+	_, _ = e.svc().Hold(ctx, app.HoldInput{EventID: "e1", Email: "a@x", Lang: "en", Quantity: 1})
+	return e.purchase("p1")
+}
+
+// The writer's enqueue picks at random between a free queue slot and a done
+// context, so each case runs 20 times to catch a write that keeps the request ctx.
+func TestHoldReleasesAfterStartFailsOnACanceledRequest(t *testing.T) {
+	for range 20 {
+		if p := holdCanceledDuringStart(t, errBoom); p.State != "released" {
+			t.Fatalf("state = %q, want released", p.State)
+		}
+	}
+}
+
+func TestHoldRecordsPaymentIDOnACanceledRequest(t *testing.T) {
+	for range 20 {
+		if p := holdCanceledDuringStart(t, nil); p.PaymentID == nil || *p.PaymentID != "pay-1" {
+			t.Fatalf("payment_id = %v, want pay-1", p.PaymentID)
+		}
 	}
 }

@@ -20,6 +20,7 @@ type funcPayment struct {
 	mu        sync.Mutex
 	refunded  []string
 	refundErr error
+	failOnly  string // when set, only this payment_id gets refundErr
 	completed func(since time.Time) ([]port.Completion, error)
 }
 
@@ -27,6 +28,9 @@ func (p *funcPayment) Refund(_ context.Context, paymentID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.refunded = append(p.refunded, paymentID)
+	if p.failOnly != "" && p.failOnly != paymentID {
+		return nil
+	}
 	return p.refundErr
 }
 
@@ -139,5 +143,17 @@ func TestRetryRefundsReturnsListError(t *testing.T) {
 	_ = e.s.Read.Close()
 	if n, err := e.svc().RetryRefunds(t.Context()); err == nil || n != 0 {
 		t.Errorf("n = %d, err = %v; want 0 and an error", n, err)
+	}
+}
+
+func TestRetryRefundsReturnsOrphanRefundError(t *testing.T) {
+	e, fp, id, _ := refundingSetup(t)
+	fp.refundErr, fp.failOnly = errBoom, "pay-ghost"
+	n, err := e.svc().RetryRefunds(t.Context())
+	if n != 1 || !errors.Is(err, errBoom) || !strings.Contains(err.Error(), "refund orphan payment pay-ghost") {
+		t.Fatalf("n = %d, err = %v; want 1 and the orphan's refund error", n, err)
+	}
+	if e.stateRow(id).State != "refunded" || e.orphanState("pay-ghost") != "refunding" {
+		t.Errorf("states = %s, %s; want refunded, refunding", e.stateRow(id).State, e.orphanState("pay-ghost"))
 	}
 }
