@@ -13,6 +13,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"encoding/json/v2"
 	"encoding/pem"
 	"io"
@@ -30,6 +31,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 const (
@@ -41,33 +44,129 @@ const (
 
 var jst = time.FixedZone("JST", 9*60*60)
 
+// fixture is a running serve with an organizer logged in and one event of
+// capacity 10 on sale.
+type fixture struct {
+	bin, password, eventID string
+	env                    map[string]string
+	cert                   *x509.Certificate
+	srv                    *server
+	org                    *client
+}
+
+func setup(t *testing.T, paymentDelay string) *fixture {
+	t.Helper()
+	f := &fixture{bin: buildBinary(t), password: rand.Text()}
+	f.env, f.cert = serveEnv(t, paymentDelay)
+	f.srv = start(t, f.bin, f.env)
+	createOrganizer(t, f.bin, f.env, f.password)
+	f.org = f.newClient(t)
+	f.org.login(t, f.password)
+	f.eventID = f.org.createEvent(t)
+	return f
+}
+
+func (f *fixture) newClient(t *testing.T) *client {
+	t.Helper()
+	return newClient(t, f.cert, f.env["FIRSTLINE_ADDR"])
+}
+
 func TestPurchaseLookupAndRestart(t *testing.T) {
-	bin := buildBinary(t)
-	env, cert := serveEnv(t)
-	password := rand.Text()
+	f := setup(t, "1s")
 
-	srv := start(t, bin, env)
-	createOrganizer(t, bin, env, password)
-
-	org := newClient(t, cert, env["FIRSTLINE_ADDR"])
-	org.login(t, password)
-	eventID := org.createEvent(t)
-
-	buyer := newClient(t, cert, env["FIRSTLINE_ADDR"])
-	statusPath, token := buyer.hold(t, eventID)
+	buyer := f.newClient(t)
+	statusPath, token := buyer.hold(t, f.eventID)
 	body := buyer.waitForState(t, statusPath, "Purchased")
 	assertTickets(t, body, "1-2")
-	assertTickets(t, buyer.lookup(t, token), "1-2")
-	org.assertSold(t, eventID, "2")
-	checkHealth(t, env["FIRSTLINE_ADMIN_ADDR"])
+	assertTickets(t, buyer.lookup(t, token, "Purchased"), "1-2")
+	f.org.assertSales(t, f.eventID, map[string]string{"sold": "2", "remaining": "8"})
+	checkHealth(t, f.env["FIRSTLINE_ADMIN_ADDR"])
 
-	srv.stop(t)
+	f.srv.stop(t)
 
-	start(t, bin, env)
-	again := newClient(t, cert, env["FIRSTLINE_ADDR"])
-	again.login(t, password)
-	again.assertSold(t, eventID, "2")
-	assertTickets(t, buyer.lookup(t, token), "1-2")
+	start(t, f.bin, f.env)
+	again := f.newClient(t)
+	again.login(t, f.password)
+	again.assertSales(t, f.eventID, map[string]string{"sold": "2", "remaining": "8"})
+	assertTickets(t, buyer.lookup(t, token, "Purchased"), "1-2")
+}
+
+// TestLateCompletionIsRefunded covers a payment that completes after the hold
+// expired: expired, then refunding, then refunded by the refund retry.
+func TestLateCompletionIsRefunded(t *testing.T) {
+	// Long enough to move the deadline and let the expiry job run first.
+	f := setup(t, "6s")
+	db := openDB(t, f.env["FIRSTLINE_DB_PATH"])
+
+	buyer := f.newClient(t)
+	statusPath, token := buyer.hold(t, f.eventID)
+	purchaseID := strings.TrimPrefix(strings.SplitN(statusPath, "?", 2)[0], "/purchases/")
+	// The test moves the deadline instead of the clock: the hold TTL is a fixed
+	// 10 minutes and the binary reads time.Now. Two minutes back passes the
+	// expiry job's one-minute grace.
+	past := time.Now().Add(-2 * time.Minute).UnixMilli()
+	if res, err := db.ExecContext(t.Context(), "UPDATE purchases SET expires_at = ? WHERE id = ? AND state = 'held'", past, purchaseID); err != nil {
+		t.Fatal(err)
+	} else if n, _ := res.RowsAffected(); n != 1 {
+		t.Fatalf("moved the deadline of %d purchases; want 1 held purchase", n)
+	}
+
+	// The refund retry runs every 30 seconds, so refunded can take that long after refunding.
+	states := watchStates(t, db, purchaseID, "refunded", 60*time.Second)
+	// A 100ms poll can miss held (the expiry job runs every second) and refunding
+	// (the refund retry may fire right after the completion). refunded is reached
+	// only from refunding, and the single refund billing row below pins it.
+	states = slices.DeleteFunc(states, func(s string) bool { return s == "held" || s == "refunding" })
+	if want := []string{"expired", "refunded"}; !slices.Equal(states, want) {
+		t.Errorf("states other than held and refunding = %v; want %v", states, want)
+	}
+	var refunds, charges int
+	if err := db.QueryRowContext(t.Context(),
+		"SELECT COUNT(CASE WHEN kind = 'refund' THEN 1 END), COUNT(CASE WHEN kind = 'charge' THEN 1 END) FROM billing_logs WHERE purchase_id = ?",
+		purchaseID).Scan(&refunds, &charges); err != nil {
+		t.Fatal(err)
+	}
+	if refunds != 1 || charges != 0 {
+		t.Errorf("billing rows: %d refund, %d charge; want 1 refund and no charge", refunds, charges)
+	}
+	f.org.assertSales(t, f.eventID, map[string]string{"held": "0", "sold": "0", "remaining": "10", "refunds": "1"})
+	if body := buyer.lookup(t, token, "Refunded"); strings.Contains(body, "Reference number") {
+		t.Errorf("a refunded purchase shows reference numbers:\n%s", body)
+	}
+}
+
+func openDB(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+// watchStates polls the purchase's state until it reaches final and returns
+// each distinct state seen, in order.
+func watchStates(t *testing.T, db *sql.DB, purchaseID, final string, limit time.Duration) []string {
+	t.Helper()
+	var seen []string
+	deadline := time.Now().Add(limit)
+	for {
+		var state string
+		if err := db.QueryRowContext(t.Context(), "SELECT state FROM purchases WHERE id = ?", purchaseID).Scan(&state); err != nil {
+			t.Fatal(err)
+		}
+		if len(seen) == 0 || seen[len(seen)-1] != state {
+			seen = append(seen, state)
+		}
+		if state == final {
+			return seen
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("purchase did not reach %s within %v; states seen %v", final, limit, seen)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func buildBinary(t *testing.T) string {
@@ -82,7 +181,7 @@ func buildBinary(t *testing.T) string {
 
 // serveEnv returns the variables for a serve on free local ports. The directory
 // comes from os.MkdirTemp because macOS caps a unix socket path at 104 bytes.
-func serveEnv(t *testing.T) (map[string]string, *x509.Certificate) {
+func serveEnv(t *testing.T, paymentDelay string) (map[string]string, *x509.Certificate) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "fl")
 	if err != nil {
@@ -96,7 +195,7 @@ func serveEnv(t *testing.T) (map[string]string, *x509.Certificate) {
 		"FIRSTLINE_ADMIN_SOCK": filepath.Join(dir, "admin.sock"), "FIRSTLINE_TLS_CERT": certFile, "FIRSTLINE_TLS_KEY": keyFile,
 		"FIRSTLINE_ADDR": freeAddr(t), "FIRSTLINE_ADMIN_ADDR": freeAddr(t), "FIRSTLINE_METRICS": "none",
 		"FIRSTLINE_TOKEN_KEY": rand.Text() + rand.Text(), "FIRSTLINE_BASE_URL": "https://localhost",
-		"FIRSTLINE_FAKE_PAYMENT_DELAY": "1s", "FIRSTLINE_FAKE_PAYMENT_OUTCOME": "complete",
+		"FIRSTLINE_FAKE_PAYMENT_DELAY": paymentDelay, "FIRSTLINE_FAKE_PAYMENT_OUTCOME": "complete",
 	}, cert
 }
 
@@ -342,23 +441,26 @@ func (c *client) waitForState(t *testing.T, path, state string) string {
 	}
 }
 
-func (c *client) lookup(t *testing.T, token string) string {
+func (c *client) lookup(t *testing.T, token, state string) string {
 	t.Helper()
 	u, body := c.do(t, http.MethodPost, "/lookup", url.Values{"email": {buyerEmail}, "token": {token}})
 	if !strings.HasPrefix(u.Path, "/purchases/") {
 		t.Fatalf("lookup ended on %s\n%s", u.Path, body)
 	}
-	if !strings.Contains(body, "<dd>Purchased</dd>") {
-		t.Errorf("lookup page lacks the purchased state:\n%s", body)
+	if !strings.Contains(body, "<dd>"+state+"</dd>") {
+		t.Errorf("lookup page lacks the state %q:\n%s", state, body)
 	}
 	return body
 }
 
-func (c *client) assertSold(t *testing.T, eventID, sold string) {
+// assertSales checks the sales page's counters by their element IDs.
+func (c *client) assertSales(t *testing.T, eventID string, want map[string]string) {
 	t.Helper()
 	_, body := c.do(t, http.MethodGet, "/admin/events/"+url.PathEscape(eventID), nil)
-	if !strings.Contains(body, `<dd id="sold">`+sold+`</dd>`) {
-		t.Errorf("sales page does not show %s sold:\n%s", sold, body)
+	for id, n := range want {
+		if !strings.Contains(body, `<dd id="`+id+`">`+n+`</dd>`) {
+			t.Errorf("sales page does not show %s = %s:\n%s", id, n, body)
+		}
 	}
 }
 
