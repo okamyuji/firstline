@@ -80,8 +80,8 @@ func (wr *wiring) open(ctx context.Context) error {
 	}))
 	adminMux := http.NewServeMux()
 	adminMux.Handle("GET /healthz", observe.Handler(wr.log, wr.snapshot))
-	wr.admin.Handler = adminMux
-	wr.sock.Handler = organizerHandler(svc, reportTo(wr.rep))
+	wr.admin.Handler = observe.WithRequestIDs(adminMux)
+	wr.sock.Handler = observe.WithRequestIDs(organizerHandler(svc, reportTo(wr.rep)))
 	return nil
 }
 

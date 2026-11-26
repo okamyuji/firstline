@@ -40,8 +40,11 @@ run() {
 	: >"$tmp/log"
 	rm -rf "$tmp/data"
 	mkdir "$tmp/data"
-	echo original >"$tmp/data/firstline.db"
-	touch "$tmp/data/firstline.db-wal" "$tmp/data/firstline.db-shm"
+	# NO_DB=1 is a new host with no database yet.
+	if [ -z "${NO_DB:-}" ]; then
+		echo original >"$tmp/data/firstline.db"
+		touch "$tmp/data/firstline.db-wal" "$tmp/data/firstline.db-shm"
+	fi
 	LOG="$tmp/log" PATH="$tmp/bin:$PATH" FIRSTLINE_DATA_DIR="$tmp/data" \
 		FIRSTLINE_ENV_FILE="$tmp/env" FIRSTLINE_LITESTREAM_ENV_FILE="$tmp/litestream.env" \
 		bash "$root/scripts/restore.sh" "$@" >/dev/null
@@ -96,13 +99,25 @@ for ts in not-a-time yesterday 2026-11-26 10:00 '2026-11-26 10:00:00' 2026-11-26
 	[ "$(cat "$tmp/data/firstline.db")" = original ] || fail "database moved for the bad timestamp $ts"
 done
 
-# A failure after the move puts the old files back and starts both services again.
+# A failure after the move stops Litestream, keeps the restored files aside,
+# puts the old files back and starts both services again.
 for step in litestream chown runuser; do
 	if FAKE_FAIL=$step run 2026-11-26T10:00:00Z 2>/dev/null; then fail "a failing $step was not reported"; fi
 	[ "$(cat "$tmp/data/firstline.db")" = original ] || fail "old database not put back after $step failed"
 	[ -e "$tmp/data/firstline.db-wal" ] && [ -e "$tmp/data/firstline.db-shm" ] || fail "WAL or SHM not put back after $step failed"
-	[ "$(tail -n 1 "$tmp/log")" = 'systemctl start litestream firstline' ] || fail "services not restarted after $step failed"
+	after=$(awk -v s="$step" '$1 == s { f = 1; next } f && $1 == "systemctl"' "$tmp/log")
+	[ "$after" = 'systemctl stop litestream
+systemctl start litestream firstline' ] || fail "after $step failed: $after; want Litestream stopped, then both started"
+	# The fake litestream fails before it writes, so only later steps leave a restored file.
+	if [ "$step" != litestream ]; then
+		[ "$(cat "$tmp/data"/failed-restore-*/firstline.db)" = restored ] || fail "restored database not kept after $step failed"
+	fi
 done
+
+# With no old database there is nothing to go back to: the services stay stopped.
+if NO_DB=1 FAKE_FAIL=litestream run 2026-11-26T10:00:00Z 2>/dev/null; then fail "a failing restore on a new host was not reported"; fi
+grep -q '^systemctl start' "$tmp/log" && fail "services started with no database to put back"
+[ ! -e "$tmp/data/firstline.db" ] || fail "a database appeared on a new host after the failure"
 # A missing env file fails inside load_env, which the ERR trap must still see.
 mv "$tmp/litestream.env" "$tmp/litestream.env.away"
 if run 2026-11-26T10:00:00Z 2>/dev/null; then fail "a missing env file was not reported"; fi

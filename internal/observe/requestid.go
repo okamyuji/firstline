@@ -2,7 +2,9 @@ package observe
 
 import (
 	"context"
+	"crypto/rand"
 	"log/slog"
+	"net/http"
 )
 
 type requestIDKey struct{}
@@ -10,6 +12,14 @@ type requestIDKey struct{}
 // WithRequestID returns ctx carrying the request id id.
 func WithRequestID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, requestIDKey{}, id)
+}
+
+// WithRequestIDs gives each request a random id that every log line of the
+// request carries through the context.
+func WithRequestIDs(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(WithRequestID(r.Context(), rand.Text())))
+	})
 }
 
 // RequestID returns the request id in ctx, or "" when there is none.

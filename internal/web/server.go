@@ -4,7 +4,6 @@ package web
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"embed"
 	"errors"
 	"fmt"
@@ -80,7 +79,7 @@ func NewHandler(d Deps) http.Handler {
 	static, _ := fs.Sub(staticFS, "static") // cannot fail: "static" is a valid path
 	mux.Handle("GET /static/", http.StripPrefix("/static", http.FileServerFS(static)))
 	mux.HandleFunc("/", s.noRoute(mux))
-	return withRequestID(headers(s.rejectNUL(s.accessLog(http.NewCrossOriginProtection().Handler(mux)))))
+	return observe.WithRequestIDs(headers(s.rejectNUL(s.accessLog(http.NewCrossOriginProtection().Handler(mux)))))
 }
 
 // noRoute answers 405 with Allow when the path has a route for another
@@ -106,14 +105,6 @@ func (s *server) noRoute(mux *http.ServeMux) http.HandlerFunc {
 		w.Header().Set("Allow", strings.Join(allow, ", "))
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 	}
-}
-
-// withRequestID gives the request a random id that every log line of the
-// request carries through the context.
-func withRequestID(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r.WithContext(observe.WithRequestID(r.Context(), rand.Text())))
-	})
 }
 
 // rejectNUL answers 400 before the access log: bun refuses a string with NUL

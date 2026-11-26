@@ -25,6 +25,7 @@ import (
 
 	"github.com/okamyuji/firstline/internal/app"
 	"github.com/okamyuji/firstline/internal/auth"
+	"github.com/okamyuji/firstline/internal/observe"
 	"github.com/okamyuji/firstline/internal/store"
 )
 
@@ -327,5 +328,55 @@ func TestLockFileIsOwnerOnly(t *testing.T) {
 	fi, err := os.Stat(path)
 	if err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("lock file mode %v (%v); want 0600", fi.Mode().Perm(), err)
+	}
+}
+
+// ctxReporter keeps the request id of each report.
+type ctxReporter struct {
+	mu  sync.Mutex
+	ids []string
+}
+
+func (r *ctxReporter) Report(ctx context.Context, _ error, _ ...slog.Attr) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ids = append(r.ids, observe.RequestID(ctx))
+}
+
+func TestAdminAndSocketRequestsCarryARequestID(t *testing.T) {
+	env, _ := serveEnv(t)
+	env["FIRSTLINE_METRICS"] = "none"
+	cfg, err := LoadConfig(envOf(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs, err := loadCert(cfg.TLSCert, cfg.TLSKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs strings.Builder
+	rep := &ctxReporter{}
+	wr := newWiring(cfg, cs, rep, slog.New(observe.RequestIDHandler{Handler: slog.NewTextHandler(&logs, nil)}))
+	if err := wr.open(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { wr.pay.Stop(); _ = closeStore(wr.st) }()
+
+	// A WAL over 1 GiB makes /healthz log a warning; a sparse file costs no disk.
+	if err := os.Truncate(cfg.DBPath+"-wal", 1<<30+1); err != nil {
+		t.Fatal(err)
+	}
+	wr.admin.Handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "request_id=") {
+		t.Errorf("healthz warning %q; want a request id", logs.String())
+	}
+
+	// A stopped writer fails the create, which serve reports as a 500.
+	wr.w.Stop()
+	rec := httptest.NewRecorder()
+	wr.sock.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/organizers",
+		strings.NewReader(`{"email":"a@x.example","password":"long enough pw"}`)))
+	if rec.Code != http.StatusInternalServerError || len(rep.ids) != 1 || rep.ids[0] == "" {
+		t.Errorf("status %d, report ids %q; want 500 reported with a request id", rec.Code, rep.ids)
 	}
 }

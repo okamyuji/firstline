@@ -162,7 +162,7 @@ func runUntilTERM(t *testing.T) *fakeParts {
 }
 
 var startupSteps = []string{"open store and start writer", "rebuild inventory", "reconcile", "expire", "refunds",
-	"start admin", "start admin socket", "start https"}
+	"purge access logs", "start admin", "start admin socket", "start https"}
 
 func TestStartupRunsInSpecOrder(t *testing.T) {
 	p := runUntilTERM(t)

@@ -67,6 +67,9 @@ func TestMigrateDataErrorHidesDSN(t *testing.T) {
 		"postgres:postgres://user:secretpw@host:badport/db",
 		"mysql:user:secretpw@tcp(host:3306/db",
 		"mysql:user:secretpw@tcp(host:3306)/db?parseTime=secretpw",
+		// Well-formed DSNs whose server refuses the connection.
+		"postgres:postgres://user:secretpw@127.0.0.1:1/db?sslmode=disable",
+		"mysql:user:secretpw@tcp(127.0.0.1:1)/db",
 	} {
 		dir := t.TempDir()
 		code, stderr := runMigrate(t, filepath.Join(dir, "l"), "--from", spec, "--to", "sqlite:"+filepath.Join(dir, "x.db"))

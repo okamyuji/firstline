@@ -111,6 +111,8 @@ func (l *lifecycle) run(term <-chan os.Signal) error {
 	l.check(ctx, "startup reconcile", l.reconcile(ctx, l.now().Add(-startupReconcileWindow)))
 	l.check(ctx, "startup expire", l.expire(ctx))
 	l.check(ctx, "startup refunds", l.refunds(ctx))
+	// The daily job waits a day before its first run, and serve may restart sooner.
+	l.purgeLogs(ctx)
 	for _, j := range l.jobs() {
 		wg.Go(func() { app.Every(bg, l.after, j.every, j.run) })
 	}

@@ -52,16 +52,30 @@ if systemctl is-active --quiet firstline; then
 	exit 1
 fi
 
-backup=$data_dir/pre-restore-$(date -u +%Y%m%dT%H%M%SZ)
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+backup=$data_dir/pre-restore-$stamp
 # rollback puts the moved files back and starts the services again, so a failed
-# restore leaves the host as it was. The restored files can be fetched again.
+# restore leaves the host as it was. Litestream stops first because it may
+# already replicate the restored file. The restored files are kept aside, as a
+# failed reconcile may already have written to them. With no old database (a
+# new host) the services stay stopped, or serve would start on an empty one.
 rollback() {
-	echo "restore.sh: failed; putting $backup back and starting the services" >&2
-	rm -f "$db" "$db-wal" "$db-shm"
-	for f in "$backup"/*; do
-		[ -e "$f" ] && mv "$f" "$data_dir/"
+	trap - ERR
+	echo "restore.sh: failed; putting $backup back" >&2
+	systemctl stop litestream
+	local failed=$data_dir/failed-restore-$stamp f
+	mkdir -p "$failed"
+	for f in "$db" "$db-wal" "$db-shm"; do
+		if [ -e "$f" ]; then mv "$f" "$failed/"; fi
 	done
-	systemctl start litestream firstline
+	for f in "$backup"/*; do
+		if [ -e "$f" ]; then mv "$f" "$data_dir/"; fi
+	done
+	if [ -e "$db" ]; then
+		systemctl start litestream firstline
+	else
+		echo "restore.sh: no database to put back; the services stay stopped" >&2
+	fi
 }
 echo "step 2: move the current database files to $backup"
 mkdir -p "$backup"
