@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -182,6 +184,52 @@ func TestLoginThrottlesAfterFiveFailures(t *testing.T) {
 	o.clock = now.Add(15 * time.Minute)
 	if _, err := o.sv.Login(t.Context(), orgEmail, orgPass, "10.0.0.2"); err != nil {
 		t.Errorf("Login 15 minutes later = %v; want nil", err)
+	}
+}
+
+// concurrentWrongLogins sends n wrong-password logins at once and counts the
+// verifications; the slow verify keeps every request in flight together.
+func (o *orgEnv) concurrentWrongLogins(n int, email, ip func(i int) string) (verified int32, throttled int) {
+	o.t.Helper()
+	o.sv.SetPasswordFuncs(func(pw string) (string, error) { return "h:" + pw, nil },
+		func(hash, pw string) (bool, error) {
+			o.verified.Add(1)
+			time.Sleep(20 * time.Millisecond)
+			return hash == "h:"+pw, nil
+		})
+	o.verified.Store(0)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() { _, errs[i] = o.sv.Login(o.t.Context(), email(i), "wrong-password", ip(i)) })
+	}
+	wg.Wait()
+	for _, err := range errs {
+		switch {
+		case errors.Is(err, domain.ErrTooManyAttempts):
+			throttled++
+		case !errors.Is(err, domain.ErrBadCredentials):
+			o.t.Fatalf("concurrent Login = %v", err)
+		}
+	}
+	return o.verified.Load(), throttled
+}
+
+func TestConcurrentLoginsVerifyAtMostFivePerEmail(t *testing.T) {
+	o := newOrgEnv(t)
+	verified, throttled := o.concurrentWrongLogins(100,
+		func(int) string { return orgEmail }, func(i int) string { return fmt.Sprintf("10.0.%d.1", i) })
+	if verified != 5 || throttled != 95 {
+		t.Errorf("100 concurrent wrong logins for one email: verified=%d throttled=%d; want 5 and 95", verified, throttled)
+	}
+}
+
+func TestConcurrentLoginsVerifyAtMostTwentyPerIP(t *testing.T) {
+	o := newOrgEnv(t)
+	verified, throttled := o.concurrentWrongLogins(100,
+		func(i int) string { return fmt.Sprintf("u%d@example.com", i) }, func(int) string { return "10.0.0.1" })
+	if verified != 20 || throttled != 80 {
+		t.Errorf("100 concurrent wrong logins from one IP: verified=%d throttled=%d; want 20 and 80", verified, throttled)
 	}
 }
 

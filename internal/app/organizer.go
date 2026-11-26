@@ -80,22 +80,19 @@ func (s *Service) limited[T any](ctx context.Context, f func() (T, error)) (T, e
 // verified against a dummy hash so the response time does not reveal it.
 func (s *Service) Login(ctx context.Context, email, password, ip string) (string, error) {
 	email = strings.ToLower(email)
-	if !s.Throttle.Allowed(email, ip, s.Clock()) {
+	attempt, admitted := s.Throttle.Begin(email, ip, s.Clock())
+	if !admitted {
 		return "", domain.ErrTooManyAttempts
 	}
-	var org organizerRow
-	err := s.Store.Select(ctx, s.Store.Read, &org, "get_organizer_by_email", email)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", err
+	org, ok, err := s.checkPassword(ctx, email, password)
+	now := s.Clock()
+	if err == nil && !ok {
+		attempt.Fail(now)
+		return "", domain.ErrBadCredentials
 	}
-	ok, err := s.limited(ctx, func() (bool, error) { return s.verify(org, password) })
+	attempt.Succeed()
 	if err != nil {
 		return "", err
-	}
-	now := s.Clock()
-	if !ok {
-		s.Throttle.Fail(email, ip, now)
-		return "", domain.ErrBadCredentials
 	}
 	id := randomString(32)
 	err = s.Writer.Do(ctx, func(ctx context.Context, tx bun.Tx) error {
@@ -106,6 +103,16 @@ func (s *Service) Login(ctx context.Context, email, password, ip string) (string
 		return "", err
 	}
 	return id, nil
+}
+
+func (s *Service) checkPassword(ctx context.Context, email, password string) (organizerRow, bool, error) {
+	var org organizerRow
+	err := s.Store.Select(ctx, s.Store.Read, &org, "get_organizer_by_email", email)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return org, false, err
+	}
+	ok, err := s.limited(ctx, func() (bool, error) { return s.verify(org, password) })
+	return org, ok, err
 }
 
 func (s *Service) verify(org organizerRow, password string) (bool, error) {
