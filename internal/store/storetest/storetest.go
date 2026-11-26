@@ -504,6 +504,7 @@ func testMail(t *testing.T, e *env) {
 		TitleJA          string         `bun:"title_ja"`
 		TitleEN          string         `bun:"title_en"`
 		StartsAt         int64          `bun:"starts_at"`
+		EndsAt           int64          `bun:"ends_at"`
 	}
 	var rows []mailRow
 	e.sel(&rows, "list_unsent_mail")
@@ -514,17 +515,17 @@ func testMail(t *testing.T, e *env) {
 	if !slices.IsSorted(ids) || len(slices.Compact(slices.Clone(ids))) != len(ids) {
 		t.Errorf("mail ids = %v, want strictly ascending", ids)
 	}
-	eq(t, "other event's mail", [3]any{rows[3].PurchaseID, rows[3].TitleJA, rows[3].StartsAt}, [3]any{"p-o", "題名 evt2", start + 1})
+	eq(t, "other event's mail", [4]any{rows[3].PurchaseID, rows[3].TitleJA, rows[3].StartsAt, rows[3].EndsAt}, [4]any{"p-o", "題名 evt2", start + 1, start + 1001})
 	eq(t, "first mail", rows[0], mailRow{
 		ID: ids[0], PurchaseID: "p-z", Kind: "held", Lang: "en", State: "held", Email: "z@example.com",
-		Quantity: 2, Amount: 2 * price, ExpiresAt: 600, TitleJA: "題名 evt1", TitleEN: "Title evt1", StartsAt: start,
+		Quantity: 2, Amount: 2 * price, ExpiresAt: 600, TitleJA: "題名 evt1", TitleEN: "Title evt1", StartsAt: start, EndsAt: start + 1000,
 	})
 	eq(t, "second mail", rows[1], mailRow{
 		ID: ids[1], PurchaseID: "p-a", Kind: "held", Lang: "ja", State: "held",
 		PaymentID:   sql.NullString{String: "pay-a", Valid: true},
 		CheckoutURL: sql.NullString{String: "https://pay.example/a", Valid: true},
 		Email:       "a@example.com", Quantity: 1, Amount: price, ExpiresAt: 700,
-		TitleJA: "題名 evt1", TitleEN: "Title evt1", StartsAt: start,
+		TitleJA: "題名 evt1", TitleEN: "Title evt1", StartsAt: start, EndsAt: start + 1000,
 	})
 
 	eq(t, "mark sent", e.exec("mark_mail_sent", int64(80), ids[1]), 1)

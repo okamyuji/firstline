@@ -3,6 +3,9 @@ package app
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/okamyuji/firstline/internal/port"
 	"github.com/okamyuji/firstline/internal/store"
@@ -29,6 +32,10 @@ type Service struct {
 	Errors    port.ErrorReporter
 	Clock     Clock
 	NewID     func() string
+
+	lastReconcile atomic.Pointer[time.Time]
+	mailMu        sync.Mutex
+	mailFailures  map[int64]int // consecutive send failures per mail_outbox id
 }
 
 // New builds a Service; a nil NewID means random purchase IDs.
@@ -36,7 +43,10 @@ func New(d Deps) *Service {
 	if d.NewID == nil {
 		d.NewID = newID
 	}
-	return &Service{d.Store, d.Writer, d.Inventory, d.Payment, d.Errors, d.Clock, d.NewID}
+	return &Service{
+		Store: d.Store, Writer: d.Writer, Inventory: d.Inventory, Payment: d.Payment, Errors: d.Errors,
+		Clock: d.Clock, NewID: d.NewID, mailFailures: map[int64]int{},
+	}
 }
 
 // newID returns 16 random bytes as unpadded base64url. rand.Read never returns

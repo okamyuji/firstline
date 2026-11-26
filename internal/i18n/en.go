@@ -57,19 +57,13 @@ var enStrings = map[string]string{
 	AdminRefunds:      "Refunds",
 	AdminLogout:       "Log out",
 
-	MailHoldSubject: "[firstline] Your seats are on hold",
-	MailHoldBody: "We are holding %[1]s x %[2]d for you.\n" +
-		"Pay by %[3]s. Your seats are not secured unless you finish paying by then.\n" +
-		"Check your purchase here: %[4]s\n",
+	MailHoldSubject:      "[firstline] Your seats are on hold",
+	MailHoldBody:         "We are holding %[1]s x %[2]d for you.\nPay by %[3]s. Your seats are not secured unless you finish paying by then.\nCheck your purchase here: %[4]s\n",
 	MailHoldCheckout:     "Continue to payment here: %s\n",
 	MailPurchasedSubject: "[firstline] Your purchase of %s is confirmed",
-	MailPurchasedBody: "Your purchase of %[1]s is confirmed.\n" +
-		"Date and time: %[2]s\nReference number: %[3]s\n" +
-		"Check your purchase here: %[4]s\n",
-	MailRefundSubject: "[firstline] Your refund for %s has started",
-	MailRefundBody: "Your refund for %[1]s has started.\n" +
-		"Refund amount: %[2]s\n" +
-		"Check your purchase here: %[3]s\n",
+	MailPurchasedBody:    "Your purchase of %[1]s is confirmed.\nDate and time: %[2]s\nReference number: %[3]s\nCheck your purchase here: %[4]s\n",
+	MailRefundSubject:    "[firstline] Your refund for %s has started",
+	MailRefundBody:       "Your refund for %[1]s has started.\nRefund amount: %[2]s\nCheck your purchase here: %[3]s\n",
 
 	ErrSoldOut:            "Sold out.",
 	ErrInvalidTransition:  "This purchase cannot do that in its current state.",

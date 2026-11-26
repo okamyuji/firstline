@@ -59,19 +59,13 @@ var jaStrings = map[string]string{
 	AdminRefunds:      "払い戻しの件数",
 	AdminLogout:       "ログアウト",
 
-	MailHoldSubject: "【firstline】席を保留しました",
-	MailHoldBody: "%s の席を%d枚、保留しました。\n" +
-		"決済の期限は %s です。期限までに決済を終えないと、席は確保されません。\n" +
-		"購入の状況はこちらで確かめられます: %s\n",
+	MailHoldSubject:      "【firstline】席を保留しました",
+	MailHoldBody:         "%s の席を%d枚、保留しました。\n決済の期限は %s です。期限までに決済を終えないと、席は確保されません。\n購入の状況はこちらで確かめられます: %s\n",
 	MailHoldCheckout:     "決済を続けるにはこちらを開いてください: %s\n",
 	MailPurchasedSubject: "【firstline】%s の購入が確定しました",
-	MailPurchasedBody: "%s の購入が確定しました。\n" +
-		"開催日時: %s\n整理番号: %s\n" +
-		"購入の状況はこちらで確かめられます: %s\n",
-	MailRefundSubject: "【firstline】%s の払い戻しを始めました",
-	MailRefundBody: "%s の払い戻しを始めました。\n" +
-		"払い戻す金額: %s\n" +
-		"購入の状況はこちらで確かめられます: %s\n",
+	MailPurchasedBody:    "%s の購入が確定しました。\n開催日時: %s\n整理番号: %s\n購入の状況はこちらで確かめられます: %s\n",
+	MailRefundSubject:    "【firstline】%s の払い戻しを始めました",
+	MailRefundBody:       "%s の払い戻しを始めました。\n払い戻す金額: %s\n購入の状況はこちらで確かめられます: %s\n",
 
 	ErrSoldOut:            "売り切れました。",
 	ErrInvalidTransition:  "この購入は、いまの状態ではその操作ができません。",
