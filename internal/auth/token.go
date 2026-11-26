@@ -42,7 +42,7 @@ func (t Tokens) Verify(tok string, now time.Time) (string, error) {
 		return "", ErrInvalidToken
 	}
 	left, right, ok := strings.Cut(tok, ".")
-	if !ok || strings.ContainsAny(tok, "\r\n") || strings.Contains(right, ".") {
+	if !ok || strings.ContainsAny(tok, "\r\n") {
 		return "", ErrInvalidToken
 	}
 	payload, err := enc.DecodeString(left)

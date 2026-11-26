@@ -165,6 +165,20 @@ func TestThrottleSweepKeepsKeysWithAttemptsInFlight(t *testing.T) {
 	}
 }
 
+func TestThrottleSweepDropsLockedKeysAfterFifteenMinutes(t *testing.T) {
+	th := NewThrottle()
+	for range 5 {
+		failOnce(t, th, "a@example.com", "10.0.0.1", t0)
+	}
+	if allowed(th, "a@example.com", "10.0.0.2", t0) {
+		t.Fatal("not locked after 5 failures")
+	}
+	th.Sweep(t0.Add(15 * time.Minute))
+	if len(th.email) != 0 || len(th.ip) != 0 {
+		t.Errorf("locked keys kept after 15 minutes: %v, %v", th.email, th.ip)
+	}
+}
+
 func TestThrottleRefusedBeginAddsNoKey(t *testing.T) {
 	th := NewThrottle()
 	for i := range 20 {

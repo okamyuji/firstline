@@ -583,6 +583,7 @@ func migrate.Run(ctx context.Context, from, to *store.Store) error
   - `LoadConfig`が仕様の設定の表のすべての環境変数と既定を読み、`FIRSTLINE_TOKEN_KEY`が31バイトか`FIRSTLINE_BASE_URL`が空なら失敗すること。`FIRSTLINE_ERROR_REPORTER=log,log`で2つの報告先へ送ること
   - HTTPの`http.Server`の時間制限が`ReadHeaderTimeout`5秒、`ReadTimeout`10秒、`WriteTimeout`15秒、`IdleTimeout`60秒で、リクエストの期限が10秒であること
   - 起動が仕様の手順1〜8の順に進み、照合が期限切れより先に動くこと（各手順が記録を残す偽の部品で順を比べる）
+  - 手順7の定期の処理に、1時間ごとの`PurgeSessions`と1分ごとの`Throttle.Sweep`が含まれること
   - 停止が仕様の手順1〜4の順に進み、3つの`Shutdown`に同じ期限のcontextが渡ること
   - SIGHUPで新しい証明書を読み、読み直しに失敗したら古い証明書を使い続けること
   - ロックを持つプロセスがあるとき、2つ目の`serve`が終了コード1で終わること

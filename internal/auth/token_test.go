@@ -90,17 +90,19 @@ func TestVerifyRejectsMalformed(t *testing.T) {
 	tk := Tokens{Key: testKey}
 	ms := strconv.FormatInt(exp.UnixMilli(), 10)
 	tests := map[string]string{
-		"empty":            "",
-		"no dot":           "abcdef",
-		"two dots":         "a.b.c",
-		"bad base64 left":  "!!!.AAAA",
-		"bad base64 right": "AAAA.!!!",
-		"empty parts":      ".",
-		"payload no dot":   forge(testKey, "p1"+ms),
-		"empty id":         forge(testKey, "."+ms),
-		"non numeric exp":  forge(testKey, "p1.abc"),
-		"newline in sig":   tk.Issue("p1", exp)[:20] + "\n" + tk.Issue("p1", exp)[20:],
-		"empty exp":        forge(testKey, "p1."),
+		"empty":              "",
+		"no dot":             "abcdef",
+		"two dots":           "a.b.c",
+		"bad base64 left":    "!!!.AAAA",
+		"bad base64 right":   "AAAA.!!!",
+		"empty parts":        ".",
+		"payload no dot":     forge(testKey, "p1"+ms),
+		"empty id":           forge(testKey, "."+ms),
+		"non numeric exp":    forge(testKey, "p1.abc"),
+		"newline in payload": tk.Issue("p1", exp)[:20] + "\n" + tk.Issue("p1", exp)[20:],
+		"newline in sig":     withNewlineInSig(tk.Issue("p1", exp)),
+		"sig trailing bits":  withSigTrailingBit(tk.Issue("p1", exp)),
+		"empty exp":          forge(testKey, "p1."),
 	}
 	for name, tok := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -120,6 +122,7 @@ func FuzzVerify(f *testing.F) {
 	f.Add("a.b")
 	f.Add(forge(testKey, "p1.abc"))
 	f.Add(forge(testKey, "."))
+	f.Add(withSigTrailingBit(tk.Issue("p1", exp)))
 	f.Fuzz(func(t *testing.T, tok string) {
 		id, err := tk.Verify(tok, exp)
 		if err == nil && id == "" {
@@ -129,4 +132,17 @@ func FuzzVerify(f *testing.F) {
 			t.Errorf("accepted non-canonical %q", tok)
 		}
 	})
+}
+
+func withNewlineInSig(tok string) string {
+	i := strings.IndexByte(tok, '.') + 5
+	return tok[:i] + "\n" + tok[i:]
+}
+
+// withSigTrailingBit flips the lowest bit of the last character. A 32-byte
+// signature leaves 2 unused bits there, so only a strict decoder rejects it.
+func withSigTrailingBit(tok string) string {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := strings.IndexByte(alphabet, tok[len(tok)-1])
+	return tok[:len(tok)-1] + string(alphabet[last^1])
 }

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/argon2"
 )
 
 // cheap swaps in tiny Argon2id costs so tests that are not about the cost run
@@ -29,11 +32,17 @@ func TestHashPasswordUsesSpecParams(t *testing.T) {
 		t.Fatalf("hash %q does not carry the spec parameters", h)
 	}
 	salt, key, _ := strings.Cut(rest, "$")
-	if b, err := base64.RawStdEncoding.DecodeString(salt); err != nil || len(b) != 16 {
-		t.Errorf("salt %q decodes to %d bytes, %v; want 16", salt, len(b), err)
+	s, err := base64.RawStdEncoding.DecodeString(salt)
+	if err != nil || len(s) != 16 {
+		t.Errorf("salt %q decodes to %d bytes, %v; want 16", salt, len(s), err)
 	}
-	if b, err := base64.RawStdEncoding.DecodeString(key); err != nil || len(b) != 32 {
-		t.Errorf("key %q decodes to %d bytes, %v; want 32", key, len(b), err)
+	k, err := base64.RawStdEncoding.DecodeString(key)
+	if err != nil || len(k) != 32 {
+		t.Errorf("key %q decodes to %d bytes, %v; want 32", key, len(k), err)
+	}
+	// Recomputing with Argon2id itself catches a switch to Argon2i, which keeps the prefix.
+	if want := argon2.IDKey([]byte("correct horse battery"), s, 3, 65536, 4, 32); !bytes.Equal(k, want) {
+		t.Error("stored key is not Argon2id of the password with the stored salt")
 	}
 	if ok, err := VerifyPassword(h, "correct horse battery"); !ok || err != nil {
 		t.Errorf("VerifyPassword = %v, %v; want true", ok, err)
@@ -72,11 +81,13 @@ func TestVerifyPasswordRejectsMalformed(t *testing.T) {
 		"argon2i":       strings.Replace(h, "argon2id", "argon2i", 1),
 		"no key":        strings.TrimSuffix(head, "$"),
 		"bad salt":      "$argon2id$v=19$m=8,t=1,p=1$!!$" + key32,
-		"bad key":       head + "!!",
-		"short key":     "$argon2id$v=19$m=8,t=1,p=1$" + salt + "$" + base64.RawStdEncoding.EncodeToString(make([]byte, 31)),
-		"long key":      "$argon2id$v=19$m=8,t=1,p=1$" + salt + "$" + base64.RawStdEncoding.EncodeToString(make([]byte, 33)),
-		"empty key":     "$argon2id$v=19$m=8,t=1,p=1$" + salt + "$",
-		"empty":         "",
+		// 16 zero bytes end in "A"; "B" sets a trailing bit a lenient decoder ignores.
+		"salt trailing bits": "$argon2id$v=19$m=8,t=1,p=1$AAAAAAAAAAAAAAAAAAAAAB$" + key32,
+		"bad key":            head + "!!",
+		"short key":          "$argon2id$v=19$m=8,t=1,p=1$" + salt + "$" + base64.RawStdEncoding.EncodeToString(make([]byte, 31)),
+		"long key":           "$argon2id$v=19$m=8,t=1,p=1$" + salt + "$" + base64.RawStdEncoding.EncodeToString(make([]byte, 33)),
+		"empty key":          "$argon2id$v=19$m=8,t=1,p=1$" + salt + "$",
+		"empty":              "",
 	} {
 		if ok, err := VerifyPassword(bad, "password-1234"); ok || !errors.Is(err, ErrBadHash) {
 			t.Errorf("%s: VerifyPassword(%q) = %v, %v; want false, ErrBadHash", name, bad, ok, err)

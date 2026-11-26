@@ -21,6 +21,9 @@ const (
 	sessionMaxAge    = 12 * time.Hour
 	sessionIdle      = 2 * time.Hour
 	touchAfter       = 5 * time.Minute
+	// Small events only; the bounds also keep price*quantity far from int overflow.
+	maxCapacity = 100_000
+	maxPrice    = 10_000_000
 )
 
 type EventInput struct {
@@ -179,7 +182,8 @@ func (s *Service) PurgeSessions(_ context.Context) {
 // adds the capacity to the inventory.
 func (s *Service) CreateEvent(ctx context.Context, organizerID string, in EventInput) (string, error) {
 	if in.TitleJa == "" || in.TitleEn == "" || !in.StartsAt.Before(in.EndsAt) ||
-		in.Capacity < 1 || in.Price < 0 || !in.SaleStartsAt.Before(in.StartsAt) {
+		in.Capacity < 1 || in.Capacity > maxCapacity || in.Price < 0 || in.Price > maxPrice ||
+		!in.SaleStartsAt.Before(in.StartsAt) {
 		return "", domain.ErrBadInput
 	}
 	id := s.NewID()

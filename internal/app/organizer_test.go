@@ -233,6 +233,53 @@ func TestConcurrentLoginsVerifyAtMostTwentyPerIP(t *testing.T) {
 	}
 }
 
+func TestLoginThrottlesAnIPAfterTwentyFailuresAcrossEmails(t *testing.T) {
+	o := newOrgEnv(t)
+	for i := range 20 {
+		if _, err := o.sv.Login(t.Context(), fmt.Sprintf("u%d@example.com", i), "wrong-password", "10.0.0.1"); !errors.Is(err, domain.ErrBadCredentials) {
+			t.Fatalf("failure %d = %v; want ErrBadCredentials", i+1, err)
+		}
+	}
+	if _, err := o.sv.Login(t.Context(), orgEmail, orgPass, "10.0.0.1"); !errors.Is(err, domain.ErrTooManyAttempts) {
+		t.Errorf("21st Login from the IP with another email = %v; want ErrTooManyAttempts", err)
+	}
+	if _, err := o.sv.Login(t.Context(), orgEmail, orgPass, "10.0.0.2"); err != nil {
+		t.Errorf("Login from another IP = %v; want nil", err)
+	}
+}
+
+// Uses the production Argon2id, so the dummy for an unknown email must be a PHC
+// hash with the production parameters or VerifyPassword rejects it as ErrBadHash.
+func TestLoginReturnsTheSameErrorForUnknownEmailWithRealArgon2id(t *testing.T) {
+	sv := newEnv(t, inventory.NewMemory()).svc()
+	if err := sv.CreateOrganizer(t.Context(), orgEmail, orgPass); err != nil {
+		t.Fatal(err)
+	}
+	_, unknown := sv.Login(t.Context(), "nobody@example.com", orgPass, "10.0.0.1")
+	_, wrong := sv.Login(t.Context(), orgEmail, orgPass+"x", "10.0.0.1")
+	if !errors.Is(unknown, domain.ErrBadCredentials) || !errors.Is(wrong, domain.ErrBadCredentials) {
+		t.Errorf("unknown email = %v, wrong password = %v; want ErrBadCredentials for both", unknown, wrong)
+	}
+}
+
+func TestLoginReturnsDBReadErrorWithoutCountingAFailure(t *testing.T) {
+	o := newOrgEnv(t)
+	_ = o.sv.Store.Read.Close()
+	for range 5 {
+		if _, err := o.sv.Login(t.Context(), orgEmail, orgPass, "10.0.0.1"); err == nil || errors.Is(err, domain.ErrBadCredentials) {
+			t.Fatalf("Login with a closed DB = %v; want the DB error", err)
+		}
+	}
+	if n := o.verified.Load(); n != 0 {
+		t.Errorf("verified %d times after a DB error; want 0", n)
+	}
+	a, ok := o.sv.Throttle.Begin(orgEmail, "10.0.0.1", now)
+	if !ok {
+		t.Fatal("5 DB errors throttled the email; they must count as neither failures nor attempts in flight")
+	}
+	a.Succeed()
+}
+
 func TestLoginWaitsForLimiter(t *testing.T) {
 	o := newOrgEnv(t)
 	o.fillLimiter()
@@ -343,7 +390,12 @@ func TestCreateEventStoresRowsAndInventory(t *testing.T) {
 func TestCreateEventAcceptsBoundaryValues(t *testing.T) {
 	o := newOrgEnv(t)
 	if _, err := o.sv.CreateEvent(t.Context(), o.orgID, validEvent()); err != nil {
-		t.Errorf("CreateEvent at the boundaries = %v; want nil", err)
+		t.Errorf("CreateEvent at the lower boundaries = %v; want nil", err)
+	}
+	in := validEvent()
+	in.Capacity, in.Price = 100_000, 10_000_000
+	if _, err := o.sv.CreateEvent(t.Context(), o.orgID, in); err != nil {
+		t.Errorf("CreateEvent at the upper boundaries = %v; want nil", err)
 	}
 }
 
@@ -354,7 +406,9 @@ func TestCreateEventValidatesInput(t *testing.T) {
 		"empty en title":  func(in *app.EventInput) { in.TitleEn = "" },
 		"ends at start":   func(in *app.EventInput) { in.EndsAt = in.StartsAt },
 		"zero capacity":   func(in *app.EventInput) { in.Capacity = 0 },
+		"capacity over":   func(in *app.EventInput) { in.Capacity = 100_001 },
 		"negative price":  func(in *app.EventInput) { in.Price = -1 },
+		"price over":      func(in *app.EventInput) { in.Price = 10_000_001 },
 		"sale at start":   func(in *app.EventInput) { in.SaleStartsAt = in.StartsAt },
 		"sale after ends": func(in *app.EventInput) { in.SaleStartsAt = in.EndsAt },
 	} {
