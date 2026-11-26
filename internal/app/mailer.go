@@ -21,8 +21,9 @@ const (
 	mailFailureReport = 10
 	// holdNoticeWait is how long a hold notice waits for payment_id, counted from the hold's creation.
 	holdNoticeWait = time.Minute
-	tokenLifetime  = 30 * 24 * time.Hour
-	jstOffset      = 9 * 60 * 60
+	// TokenLifetime is how long a lookup token outlives the event's end.
+	TokenLifetime = 30 * 24 * time.Hour
+	jstOffset     = 9 * 60 * 60
 )
 
 // A fixed zone, so the deadline does not depend on the tz database being installed.
@@ -128,29 +129,32 @@ func (w mailText) compose(r outboxMail) (port.Mail, error) {
 	if lang == "en" {
 		title = r.TitleEN
 	}
-	url := w.baseURL + "/purchases/" + r.PurchaseID + "?token=" + w.tok.Issue(r.PurchaseID, time.UnixMilli(r.EndsAt).Add(tokenLifetime))
+	url := w.baseURL + "/purchases/" + r.PurchaseID + "?token=" + w.tok.Issue(r.PurchaseID, TokenExpiry(r.EndsAt))
 	mail := port.Mail{To: r.Email, Lang: lang}
 	switch domain.MailKind(r.Kind) {
 	case domain.MailHold:
 		mail.Subject = w.tr.T(lang, i18n.MailHoldSubject)
-		mail.Body = w.tr.T(lang, i18n.MailHoldBody, title, r.Quantity, jstTime(lang, r.ExpiresAt), url)
+		mail.Body = w.tr.T(lang, i18n.MailHoldBody, title, r.Quantity, JSTTime(lang, r.ExpiresAt), url)
 		if r.CheckoutURL.String != "" {
 			mail.Body += w.tr.T(lang, i18n.MailHoldCheckout, r.CheckoutURL.String)
 		}
 	case domain.MailPurchased:
 		mail.Subject = w.tr.T(lang, i18n.MailPurchasedSubject, title)
-		mail.Body = w.tr.T(lang, i18n.MailPurchasedBody, title, jstTime(lang, r.StartsAt), ticketRange(r), url)
+		mail.Body = w.tr.T(lang, i18n.MailPurchasedBody, title, JSTTime(lang, r.StartsAt), TicketRange(r.TicketNumberFrom.Int64, r.Quantity), url)
 	case domain.MailRefund:
 		mail.Subject = w.tr.T(lang, i18n.MailRefundSubject, title)
-		mail.Body = w.tr.T(lang, i18n.MailRefundBody, title, message.NewPrinter(language.English).Sprintf("%d", r.Amount), url)
+		mail.Body = w.tr.T(lang, i18n.MailRefundBody, title, Thousands(r.Amount), url)
 	default:
 		return port.Mail{}, fmt.Errorf("mail %d: unknown kind %q", r.ID, r.Kind)
 	}
 	return mail, nil
 }
 
-// jstTime writes unix ms in Japan time; English readers get the offset spelled out.
-func jstTime(lang string, ms int64) string {
+// TokenExpiry is the lookup token expiry for an event ending at endsAt (unix ms).
+func TokenExpiry(endsAt int64) time.Time { return time.UnixMilli(endsAt).Add(TokenLifetime) }
+
+// JSTTime writes unix ms in Japan time; English readers get the offset spelled out.
+func JSTTime(lang string, ms int64) string {
 	layout := "2006-01-02 15:04"
 	if lang == "en" {
 		layout += " -07:00"
@@ -158,10 +162,13 @@ func jstTime(lang string, ms int64) string {
 	return time.UnixMilli(ms).In(jst).Format(layout)
 }
 
-func ticketRange(r outboxMail) string {
-	from := r.TicketNumberFrom.Int64
-	if r.Quantity == 1 {
+// TicketRange writes the reference numbers from, from+1, ... of quantity tickets.
+func TicketRange(from int64, quantity int) string {
+	if quantity == 1 {
 		return strconv.FormatInt(from, 10)
 	}
-	return fmt.Sprintf("%d-%d", from, from+int64(r.Quantity)-1)
+	return fmt.Sprintf("%d-%d", from, from+int64(quantity)-1)
 }
+
+// Thousands writes n with comma separators.
+func Thousands(n int) string { return message.NewPrinter(language.English).Sprintf("%d", n) }

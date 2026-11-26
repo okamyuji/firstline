@@ -16,6 +16,7 @@ var jaStrings = map[string]string{
 	LabelPrice:  "価格",
 	LabelRemain: "残数",
 	LabelTitle:  "題名",
+	PriceYen:    "%s円",
 
 	ListHeading:   "イベント一覧",
 	ListEmpty:     "いま販売中のイベントはありません。",
@@ -79,5 +80,6 @@ var jaStrings = map[string]string{
 	ErrBadCredentials:     "メールアドレスまたはパスワードが違います。",
 	ErrTooManyAttempts:    "ログインの失敗が続いたため受け付けを止めています。15分後にやり直してください。",
 	ErrNoSession:          "ログインし直してください。",
+	ErrTooManyHolds:       "購入の申し込みが多すぎます。1分ほど待ってからやり直してください。",
 	ErrInternal:           "エラーが起きました。しばらくしてからやり直してください。",
 }

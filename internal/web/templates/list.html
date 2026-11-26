@@ -1,0 +1,5 @@
+{{define "content"}}{{if .Events}}<ul class="events">
+{{range .Events}}<li><a href="/events/{{.ID}}">{{.Title}}</a>
+<span>{{.Date}}</span> <span>{{.Price}}</span>
+{{if not .Open}}<span class="badge">{{$.T "list.not_on_sale"}}</span>{{else if .SoldOut}}<span class="badge">{{$.T "list.sold_out"}}</span>{{else}}<span>{{$.T "label.remaining"}} {{.Remaining}}</span>{{end}}</li>
+{{end}}</ul>{{else}}<p>{{.T "list.empty"}}</p>{{end}}{{end}}

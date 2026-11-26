@@ -13,6 +13,7 @@ var enStrings = map[string]string{
 	LabelPrice:  "Price",
 	LabelRemain: "Remaining",
 	LabelTitle:  "Title",
+	PriceYen:    "JPY %s",
 
 	ListHeading:   "Events",
 	ListEmpty:     "No events are on sale right now.",
@@ -76,5 +77,6 @@ var enStrings = map[string]string{
 	ErrBadCredentials:     "The email address or password is wrong.",
 	ErrTooManyAttempts:    "Too many failed logins. Please try again in 15 minutes.",
 	ErrNoSession:          "Please log in again.",
+	ErrTooManyHolds:       "Too many purchase attempts. Please wait a minute and try again.",
 	ErrInternal:           "Something went wrong. Please try again later.",
 }

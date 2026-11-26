@@ -1,0 +1,11 @@
+{{define "content"}}{{template "status" .}}{{end}}
+{{define "status"}}{{with .Purchase}}<section id="status"{{if .Held}} hx-get="{{.PollURL}}" hx-trigger="every 5s" hx-swap="outerHTML"{{end}}>
+<dl>
+<dt>{{$.T "label.status"}}</dt><dd>{{.State}}</dd>
+<dt>{{$.T "label.quantity"}}</dt><dd>{{.Quantity}}</dd>
+{{with .Tickets}}<dt>{{$.T "status.seat_number"}}</dt><dd>{{.}}</dd>{{end}}
+{{if .Held}}<dt>{{$.T "status.deadline"}}</dt><dd>{{.Deadline}}</dd>{{end}}
+</dl>
+{{if .Held}}<p>{{$.T "status.deadline_note"}}</p>
+{{with .CheckoutURL}}<p><a href="{{.}}">{{$.T "status.continue_payment"}}</a></p>{{end}}{{end}}
+</section>{{end}}{{end}}

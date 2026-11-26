@@ -15,6 +15,7 @@ const (
 	LabelPrice  = "label.price"
 	LabelRemain = "label.remaining"
 	LabelTitle  = "label.title"
+	PriceYen    = "price.yen"
 
 	// Event list.
 	ListHeading   = "list.heading"
@@ -85,5 +86,6 @@ const (
 	ErrBadCredentials     = "error.bad_credentials"
 	ErrTooManyAttempts    = "error.too_many_attempts"
 	ErrNoSession          = "error.no_session"
+	ErrTooManyHolds       = "error.too_many_holds"
 	ErrInternal           = "error.internal"
 )
