@@ -5,6 +5,7 @@ go 1.27
 require (
 	github.com/uptrace/bun v1.3.0
 	github.com/uptrace/bun/dialect/sqlitedialect v1.3.0
+	golang.org/x/text v0.44.0
 	modernc.org/sqlite v1.63.0
 )
 

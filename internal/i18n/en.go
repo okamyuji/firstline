@@ -1,0 +1,82 @@
+package i18n
+
+var enStrings = map[string]string{
+	SiteTitle:   "firstline",
+	NavEvents:   "Events",
+	NavLookup:   "Look up a purchase",
+	NavAdmin:    "Organizers",
+	ActionBack:  "Back",
+	LabelEmail:  "Email address",
+	LabelQty:    "Quantity",
+	LabelStatus: "Status",
+	LabelDate:   "Date and time",
+	LabelPrice:  "Price",
+	LabelRemain: "Remaining",
+	LabelTitle:  "Title",
+
+	ListHeading:   "Events",
+	ListEmpty:     "No events are on sale right now.",
+	ListNotOnSale: "Not on sale yet",
+	ListSoldOut:   "Sold out",
+
+	DetailBuy:          "Buy tickets",
+	DetailQuantityHelp: "You can buy 1 to 4 tickets at a time.",
+
+	StatusHeading:      "Purchase status",
+	StatusHeld:         "Awaiting payment",
+	StatusPurchased:    "Purchased",
+	StatusRefunding:    "Refund in progress",
+	StatusRefunded:     "Refunded",
+	StatusExpired:      "Expired",
+	StatusFailed:       "Payment failed",
+	StatusSeatNumber:   "Reference number",
+	StatusDeadline:     "Payment deadline",
+	StatusDeadlineNote: "Your seats are not secured unless you finish paying by the deadline.",
+	StatusContinue:     "Continue to payment",
+
+	LookupHeading:  "Look up a purchase",
+	LookupToken:    "Lookup token",
+	LookupSubmit:   "Look up",
+	LookupMismatch: "No purchase matches that email address and token.",
+
+	AdminLoginHeading: "Organizer login",
+	AdminPassword:     "Password",
+	AdminLoginSubmit:  "Log in",
+	AdminLoginFailed:  "The email address or password is wrong.",
+	AdminEventsHead:   "Your events",
+	AdminNewEvent:     "Create an event",
+	AdminCreateHead:   "Create an event",
+	AdminTitleJa:      "Title (Japanese)",
+	AdminTitleEn:      "Title (English)",
+	AdminCapacity:     "Capacity",
+	AdminSaleStart:    "Sale start",
+	AdminCreateSubmit: "Create",
+	AdminSalesHeading: "Sales",
+	AdminHeld:         "On hold",
+	AdminPurchased:    "Purchased",
+	AdminRefunds:      "Refunds",
+	AdminLogout:       "Log out",
+
+	MailHoldSubject: "[firstline] Your seats are on hold",
+	MailHoldBody: "We are holding %[1]s x %[2]d for you.\n" +
+		"Pay by %[3]s. Your seats are not secured unless you finish paying by then.\n" +
+		"Check your purchase here: %[4]s\n",
+	MailHoldCheckout:     "Continue to payment here: %s\n",
+	MailPurchasedSubject: "[firstline] Your purchase of %s is confirmed",
+	MailPurchasedBody: "Your purchase of %[1]s is confirmed.\n" +
+		"Date and time: %[2]s\nReference number: %[3]s\n" +
+		"Check your purchase here: %[4]s\n",
+	MailRefundSubject: "[firstline] Your refund for %s has started",
+	MailRefundBody: "Your refund for %[1]s has started.\n" +
+		"Refund amount: %[2]s\n" +
+		"Check your purchase here: %[3]s\n",
+
+	ErrSoldOut:            "Sold out.",
+	ErrInvalidTransition:  "This purchase cannot do that in its current state.",
+	ErrNotOnSale:          "This event is not on sale right now.",
+	ErrBadQuantity:        "Choose 1 to 4 tickets.",
+	ErrDuplicateHold:      "This email address already has a purchase on hold.",
+	ErrNotFound:           "Not found.",
+	ErrPaymentUnavailable: "We could not start the payment. Please try again later.",
+	ErrInternal:           "Something went wrong. Please try again later.",
+}
