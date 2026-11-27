@@ -115,4 +115,9 @@ grep -qxF '    ignore_changes  = [ami]' <<<"$host" ||
 # disk with it, and a new Elastic IP would break the DNS record; terraform must refuse.
 grep -qxF '    prevent_destroy = true' <<<"$host" || fail "aws_instance.host must set prevent_destroy"
 grep -qxF '    prevent_destroy = true' <<<"$(block aws_eip host)" || fail "aws_eip.host must set prevent_destroy"
+# The tests in deploy/terraform/tests look at named resources only, so a resource added
+# beside them (another ingress rule, another role policy) would pass; pin the inventory.
+got=$(grep -hoE '^resource "[a-z0-9_]+" "[a-z0-9_]+"' "$deploy"/terraform/*.tf | LC_ALL=C sort | tr '\n' ';')
+want='resource "aws_cloudwatch_log_group" "app";resource "aws_cloudwatch_log_group" "metrics";resource "aws_cloudwatch_log_metric_filter" "errors";resource "aws_cloudwatch_metric_alarm" "this";resource "aws_eip" "host";resource "aws_eip_association" "host";resource "aws_iam_instance_profile" "host";resource "aws_iam_role" "host";resource "aws_iam_role_policy" "litestream";resource "aws_iam_role_policy_attachment" "managed";resource "aws_instance" "host";resource "aws_internet_gateway" "main";resource "aws_route_table" "public";resource "aws_route_table_association" "public";resource "aws_s3_bucket" "backup";resource "aws_s3_bucket_lifecycle_configuration" "backup";resource "aws_s3_bucket_policy" "backup";resource "aws_s3_bucket_public_access_block" "backup";resource "aws_s3_bucket_versioning" "backup";resource "aws_security_group" "host";resource "aws_sns_topic" "alerts";resource "aws_sns_topic_subscription" "operator";resource "aws_subnet" "public";resource "aws_vpc" "main";resource "aws_vpc_endpoint" "s3";resource "aws_vpc_security_group_egress_rule" "all";resource "aws_vpc_security_group_ingress_rule" "web";'
+[ "$got" = "$want" ] || fail "deploy/terraform resources changed: $got"
 echo "deploy_test: ok"

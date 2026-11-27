@@ -25,3 +25,11 @@ run "state_bucket_is_versioned_and_private" {
     error_message = "all four public access blocks must be on"
   }
 }
+
+run "state_bucket_must_be_a_valid_s3_name" {
+  command = plan
+  variables {
+    state_bucket = "-state-"
+  }
+  expect_failures = [var.state_bucket]
+}

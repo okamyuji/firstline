@@ -1,6 +1,13 @@
 variable "backup_bucket" {
   description = "Name of the S3 bucket Litestream replicates to."
   type        = string
+
+  # The S3 bucket naming rules: 3 to 63 of a-z, 0-9, "." and "-", starting and ending
+  # with a letter or digit, no "..". AWS itself rejects the rarer reserved forms.
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.backup_bucket)) && !strcontains(var.backup_bucket, "..")
+    error_message = "backup_bucket must follow the S3 bucket naming rules."
+  }
 }
 
 variable "alert_email" {
@@ -8,7 +15,7 @@ variable "alert_email" {
   type        = string
 
   validation {
-    condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.alert_email))
+    condition     = can(regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$", var.alert_email))
     error_message = "alert_email must be a mail address."
   }
 }

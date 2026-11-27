@@ -93,10 +93,32 @@ resource "aws_s3_bucket_lifecycle_configuration" "backup" {
     expiration {
       expired_object_delete_marker = true
     }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
   }
 
   # A lifecycle rule on noncurrent versions needs versioning in place first.
   depends_on = [aws_s3_bucket_versioning.backup]
+}
+
+resource "aws_s3_bucket_policy" "backup" {
+  bucket = aws_s3_bucket.backup.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource  = [aws_s3_bucket.backup.arn, "${aws_s3_bucket.backup.arn}/*"]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+  })
+
+  # A bucket policy is refused while the public access block is being created.
+  depends_on = [aws_s3_bucket_public_access_block.backup]
 }
 
 resource "aws_s3_bucket_public_access_block" "backup" {
@@ -164,9 +186,12 @@ resource "aws_instance" "host" {
   iam_instance_profile        = aws_iam_instance_profile.host.name
   associate_public_ip_address = false
 
+  disable_api_termination = true
+
   metadata_options {
-    http_endpoint = "enabled"
-    http_tokens   = "required"
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
   }
 
   root_block_device {

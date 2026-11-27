@@ -15,6 +15,13 @@ resource "aws_cloudwatch_log_group" "app" {
   retention_in_days = 30
 }
 
+# The EMF lines go to this group (LogGroupName in internal/observe/emf); without it the
+# agent would create the group with no expiry.
+resource "aws_cloudwatch_log_group" "metrics" {
+  name              = "/firstline/metrics"
+  retention_in_days = 30
+}
+
 resource "aws_cloudwatch_log_metric_filter" "errors" {
   name           = "firstline-errors"
   log_group_name = aws_cloudwatch_log_group.app.name

@@ -223,3 +223,81 @@ run "scale_alarm_waits_for_the_measured_limit" {
     error_message = "before the load test of ADR-0003 there is no limit, so only the scale alarm is left out"
   }
 }
+
+run "backup_bucket_must_be_a_valid_s3_name" {
+  command = plan
+  variables {
+    backup_bucket = "Bad_Name!"
+  }
+  expect_failures = [var.backup_bucket]
+}
+
+run "backup_bucket_must_not_hold_adjacent_periods" {
+  command = plan
+  variables {
+    backup_bucket = "fire..line"
+  }
+  expect_failures = [var.backup_bucket]
+}
+
+run "alert_email_must_be_one_address" {
+  command = plan
+  variables {
+    alert_email = "ops@example.com,other"
+  }
+  expect_failures = [var.alert_email]
+}
+
+run "only_ec2_assumes_the_role" {
+  command = apply
+
+  assert {
+    condition = jsondecode(aws_iam_role.host.assume_role_policy).Statement == [{
+      Effect    = "Allow"
+      Action    = ["sts:AssumeRole"]
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+    error_message = "only the EC2 service may assume the host role"
+  }
+}
+
+run "host_hardening" {
+  command = apply
+
+  assert {
+    condition     = aws_instance.host.metadata_options[0].http_put_response_hop_limit == 1
+    error_message = "a hop limit of 1 keeps the role's credentials away from containers on the host"
+  }
+  assert {
+    condition     = aws_instance.host.disable_api_termination == true
+    error_message = "termination protection must be on"
+  }
+  assert {
+    condition     = strcontains(data.aws_ssm_parameter.ubuntu.name, "/24.04/stable/current/arm64/")
+    error_message = "t4g is Arm, so the AMI is Ubuntu 24.04 for arm64"
+  }
+}
+
+run "backup_bucket_hygiene" {
+  command = apply
+
+  assert {
+    condition     = aws_s3_bucket_lifecycle_configuration.backup.rule[0].abort_incomplete_multipart_upload[0].days_after_initiation == 7
+    error_message = "unfinished multipart uploads must be cleaned up after 7 days"
+  }
+  assert {
+    condition = jsondecode(aws_s3_bucket_policy.backup.policy).Statement == [{
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource  = [aws_s3_bucket.backup.arn, "${aws_s3_bucket.backup.arn}/*"]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+    error_message = "the bucket must refuse requests without TLS"
+  }
+  assert {
+    condition     = aws_cloudwatch_log_group.metrics.name == "/firstline/metrics" && aws_cloudwatch_log_group.metrics.retention_in_days == 30
+    error_message = "the EMF log group keeps 30 days like the other groups"
+  }
+}
