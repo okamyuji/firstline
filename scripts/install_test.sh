@@ -43,7 +43,13 @@ curl)
 	*/latest/api/token) echo not-a-real-imds-token ;;
 	*/iam/security-credentials/) echo firstline-host ;;
 	*/iam/security-credentials/firstline-host) echo '{"AccessKeyId":"not-a-real-access-id","SecretAccessKey":"not-a-real-secret-access","Token":"not-a-real-session"}' ;;
-	*/latest/meta-data/public-ipv4) echo 192.0.2.10 ;;
+	*/latest/meta-data/public-ipv4)
+		# FAKE_NO_IP=<n> answers 404 to the first n calls, as before the Elastic IP is associated.
+		n=$(($(cat "$STATE/ip-calls" 2>/dev/null || echo 0) + 1))
+		echo "$n" >"$STATE/ip-calls"
+		[ "$n" -gt "${FAKE_NO_IP:-0}" ] || exit 22
+		echo 192.0.2.10
+		;;
 	https://ssm.*) echo "{\"Parameter\":{\"Name\":\"/firstline/token-key\",\"Value\":\"$FAKE_SECRET\"}}" ;;
 	*.deb) cp "$FIXTURES/junk.deb" "$out" ;;
 	*) cp "$FIXTURES/$(basename "$url")" "$out" ;;
@@ -77,7 +83,7 @@ ENV
 # install runs firstline-install; its output goes to $tmp/out.
 install() {
 	LOG=$tmp/log STATE=$tmp/state FIXTURES=$tmp/fixtures FAKE_SECRET=$secret PATH="$tmp/bin:$PATH" \
-		FIRSTLINE_ROOT=$host FIRSTLINE_RELEASE_URL=https://releases.invalid/dl \
+		FIRSTLINE_ROOT=$host FIRSTLINE_RELEASE_URL=https://releases.invalid/dl FIRSTLINE_WAIT_STEP=0 \
 		bash "$root/deploy/firstline-install" >"$tmp/out" 2>&1
 }
 
@@ -100,6 +106,17 @@ reset_host
 sed -i.bak 's/^FIRSTLINE_VERSION=.*/FIRSTLINE_VERSION=v1\/..\/9.8.7/' "$host/etc/firstline/install.env"
 if install; then fail "install passed with a bad version"; fi
 ! grep -q '^curl' "$tmp/log" || fail "curl ran before the version was checked"
+
+# Until the Elastic IP is associated the host has no route out: wait, then go on.
+reset_host
+FAKE_NO_IP=2 install || fail "install failed after the address appeared: $(cat "$tmp/out")"
+[ "$(grep -c 'meta-data/public-ipv4' "$tmp/log")" = 3 ] || fail "install did not wait for the public address"
+[ "$(grep -n 'meta-data/public-ipv4' "$tmp/log" | tail -n 1 | cut -d: -f1)" -lt "$(grep -n '^apt-get' "$tmp/log" | head -n 1 | cut -d: -f1)" ] ||
+	fail "apt-get ran before the public address appeared"
+reset_host
+if FAKE_NO_IP=1000 install; then fail "install passed without a public address"; fi
+grep -q 'no public IPv4 address' "$tmp/out" || fail "no message for the missing address: $(cat "$tmp/out")"
+! grep -q '^apt-get' "$tmp/log" || fail "apt-get ran without a public address"
 
 # A new host without a certificate.
 reset_host

@@ -182,8 +182,8 @@ resource "aws_iam_instance_profile" "host" {
 }
 
 # No secret here: the host reads FIRSTLINE_TOKEN_KEY from Parameter Store itself, so
-# neither the user data nor the state holds it. ACME mails expiry notices to the
-# address the alarms use.
+# neither the user data nor the state holds it. The ACME account takes the address
+# the alarms use.
 locals {
   user_data = "#cloud-config\n${yamlencode({
     write_files = [

@@ -546,14 +546,15 @@ firstlineの取得元はGitHub Releasesです。`v`で始まるタグを押す�
 
 スクリプトの手順は次のとおりです。
 
-1. `firstline`のシステムユーザーがなければ作ります。
-2. aptでcertbotとlogrotateを入れます。
-3. Litestream v0.5.18とCloudWatch Agentのarm64のdebを取り、スクリプトに書いたSHA-256と照らしてから入れます。同じ版が入っていれば取りません。
-4. firstlineのtarballを取り、`FIRSTLINE_SHA256`と照らしてから展開し、下の表の場所へ置きます。
-5. IMDSv2からロールの一時的な認証情報を取り、`curl --aws-sigv4`でParameter Storeの`GetParameter`を`WithDecryption`付きで呼んで署名鍵を読みます。AWS CLIは使いません。
-6. `/etc/firstline/env`に`FIRSTLINE_TOKEN_KEY`と`FIRSTLINE_BASE_URL`（`https://<ドメイン>`）を、`/etc/firstline/litestream.env`に`LITESTREAM_BUCKET`を書きます。
-7. tmpfilesを適用し、certbotとlogrotateのタイマー、Litestream、CloudWatch Agentを起動します。
-8. 証明書があればfirstlineを再起動し、なければ`firstline-cert-init.timer`を有効にします。
+1. IMDSv2の`public-ipv4`が返るまで、5秒ごとに最大10分待ちます。TerraformはElastic IPをインスタンスの起動後に付けるので、それまでのホストには外へ出る経路がありません（[メタデータの項目](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html)）。
+2. `firstline`のシステムユーザーがなければ作ります。
+3. aptでcertbotとlogrotateを入れます。
+4. Litestream v0.5.18とCloudWatch Agentのarm64のdebを取り、スクリプトに書いたSHA-256と照らしてから入れます。同じ版が入っていれば取りません。
+5. firstlineのtarballを取り、`FIRSTLINE_SHA256`と照らしてから展開し、下の表の場所へ置きます。
+6. IMDSv2からロールの一時的な認証情報を取り、`curl --aws-sigv4`でParameter Storeの`GetParameter`を`WithDecryption`付きで呼んで署名鍵を読みます。AWS CLIは使いません。
+7. `/etc/firstline/env`に`FIRSTLINE_TOKEN_KEY`と`FIRSTLINE_BASE_URL`（`https://<ドメイン>`）を、`/etc/firstline/litestream.env`に`LITESTREAM_BUCKET`を書きます。
+8. tmpfilesを適用し、certbotとlogrotateのタイマー、Litestream、CloudWatch Agentを起動します。
+9. 証明書があればfirstlineを再起動し、なければ`firstline-cert-init.timer`を有効にします。
 
 | `deploy/`のファイル | ホストの置き場 |
 |---|---|

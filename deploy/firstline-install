@@ -4,8 +4,8 @@
 # Settings come from /etc/firstline/install.env, which holds no secret.
 set -euo pipefail
 
-# The overrides exist for scripts/install_test.sh and the container run; the host
-# uses the defaults.
+# The overrides (and FIRSTLINE_WAIT_STEP below) exist for scripts/install_test.sh and the
+# container run; the host uses the defaults.
 root=${FIRSTLINE_ROOT:-}
 release_url=${FIRSTLINE_RELEASE_URL:-https://github.com/okamyuji/firstline/releases/download}
 imds_url=${FIRSTLINE_IMDS_URL:-http://169.254.169.254}
@@ -60,6 +60,17 @@ install_deb() {
 	dpkg -i --force-confold "$work/$1.deb"
 }
 
+# Terraform associates the Elastic IP only after the instance is running, and until
+# then the host has no public address and no route out; cloud-init runs this once, so
+# wait for the address rather than fail.
+imds_token=$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600' "$imds_url/latest/api/token")
+tries=0
+until curl -fs -o /dev/null -H "X-aws-ec2-metadata-token: $imds_token" "$imds_url/latest/meta-data/public-ipv4"; do
+	tries=$((tries + 1))
+	[ "$tries" -lt 120 ] || die "no public IPv4 address after 10 minutes; is the Elastic IP associated?"
+	sleep "${FIRSTLINE_WAIT_STEP:-5}"
+done
+
 id -u firstline >/dev/null 2>&1 ||
 	useradd --system --user-group --home-dir /var/lib/firstline --no-create-home --shell /usr/sbin/nologin firstline
 
@@ -96,7 +107,6 @@ chown root:firstline "$etc/tls"
 chmod 0750 "$etc/tls"
 
 log "reading $param from Parameter Store"
-imds_token=$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 300' "$imds_url/latest/api/token")
 role=$(curl -fsS -H "X-aws-ec2-metadata-token: $imds_token" "$imds_url/latest/meta-data/iam/security-credentials/")
 creds=$(curl -fsS -H "X-aws-ec2-metadata-token: $imds_token" "$imds_url/latest/meta-data/iam/security-credentials/$role")
 { read -r access_key && read -r secret_key && read -r session_token; } < <(

@@ -119,7 +119,7 @@ AWSの資源は[deploy/terraform](deploy/terraform/)のTerraformで作ります�
 
    EC2は最初の起動で`/usr/local/sbin/firstline-install`を動かします。このスクリプトはfirstline、Litestream、CloudWatch Agent、certbotを入れ、署名鍵をParameter Storeから読み、LitestreamとCloudWatch Agentを起動します。
 5. `alert_email`に届くSNSの確認のメールのリンクを押します。押すまでアラームのメールは届きません。
-6. 出力の`elastic_ip`を`domain`のAレコードに書きます。名前がこのアドレスを引けるようになると、5分ごとに動く`firstline-cert-init.timer`が証明書を取り、firstlineを起動します。証明書の更新の通知は`alert_email`に届きます。
+6. 出力の`elastic_ip`を`domain`のAレコードに書きます。名前がこのアドレスを引けるようになると、5分ごとに動く`firstline-cert-init.timer`が証明書を取り、firstlineを起動します。
 7. 受付を開く前に、[ADR-0003](docs/design/adr/ADR-0003-scale-out-criteria.md)の手順でこのホストの限界負荷を測ります。測った値を`-var limit_load_items_per_sec=<限界負荷>`に足してもう一度applyすると、規模拡大の判断のアラームができます。
 
 新しい版に上げるときは、タグを付けてリリースを作り、Session Managerでホストに入って次を実行します。`/etc/firstline/install.env`の`FIRSTLINE_VERSION`と`FIRSTLINE_SHA256`を新しいタグとSHA-256に書き換えてから、スクリプトを動かしてください。スクリプトは新しい版を入れてfirstlineを再起動します。`/etc/firstline/env`のうち書き換えるのは`FIRSTLINE_TOKEN_KEY`と`FIRSTLINE_BASE_URL`だけで、運用者が変えたほかの値は残ります。
