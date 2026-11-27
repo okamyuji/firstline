@@ -130,7 +130,7 @@ grep -qF -- '-d {"Name":"/firstline/token-key","WithDecryption":true}' "$tmp/log
 grep -qxF "useradd --system --user-group --home-dir /var/lib/firstline --no-create-home --shell /usr/sbin/nologin firstline" "$tmp/log" || fail "user not created"
 grep -qxF "systemd-tmpfiles --create $host/etc/tmpfiles.d/firstline.conf" "$tmp/log" || fail "tmpfiles not applied"
 grep -qxF "apt-get install -y -q certbot logrotate" "$tmp/log" || fail "certbot and logrotate not installed"
-grep -qxF "systemctl enable --now certbot.timer" "$tmp/log" || fail "the renewal timer is not on"
+grep -qxF "systemctl enable --now certbot.timer logrotate.timer" "$tmp/log" || fail "the renewal and log rotation timers are not on"
 grep -qxF "amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:$host/etc/firstline/cloudwatch-agent.json -s" "$tmp/log" || fail "the agent was not started with the config"
 grep -qxF "systemctl enable --now firstline-cert-init.timer" "$tmp/log" || fail "the certificate timer is not enabled"
 ! grep -qE '^systemctl (restart|start|enable --now) firstline$' "$tmp/log" || fail "firstline started without a certificate"

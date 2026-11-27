@@ -147,9 +147,9 @@ set_env "$etc/litestream.env" /dev/null LITESTREAM_BUCKET
 log "starting litestream and the CloudWatch Agent"
 systemd-tmpfiles --create "$root/etc/tmpfiles.d/firstline.conf"
 systemctl daemon-reload
-# The package enables its renewal timer, but a policy-rc.d (as in container images)
-# keeps it from starting until the next boot.
-systemctl enable --now certbot.timer
+# The packages enable these timers, but a policy-rc.d (as in container images) keeps
+# them from starting until the next boot.
+systemctl enable --now certbot.timer logrotate.timer
 systemctl enable litestream
 systemctl restart litestream
 PATH=$PATH:/opt/aws/amazon-cloudwatch-agent/bin \
