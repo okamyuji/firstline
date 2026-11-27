@@ -90,7 +90,7 @@ args=(restore -config /etc/litestream.yml -integrity-check quick)
 if [ -n "$ts" ]; then
 	args+=(-timestamp "$ts")
 fi
-# The Litestream config expands ${CF_ACCOUNT_ID} and the R2 keys from this file.
+# The Litestream config expands ${LITESTREAM_BUCKET} from this file; the instance role signs the requests.
 load_env "$litestream_env_file"
 litestream "${args[@]}" "$db"
 

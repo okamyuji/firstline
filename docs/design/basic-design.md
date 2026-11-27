@@ -26,6 +26,7 @@
 | 購入照会トークンの有効期限 | 固定日数、イベント基準 | イベント終了の30日後まで | 来場後の問い合わせと払い戻しの確認に使えるようにするためです | なし |
 | 主催者ログインの試行制限 | なし、メモリの計数、表の計数 | メモリで数え、メールアドレスごとに15分で5回、IPアドレスごとに15分で20回失敗したら15分止める | 単一ノードなので共有は不要です。再起動で数がなくなるのは受け入れます | なし |
 | TLSの終端と送信元のIPアドレス | 前段のプロキシ、ALBとACM、firstline自身 | firstlineが標準ライブラリの`http.Server`で終え、IPアドレスは`Request.RemoteAddr`から取る | 前段を置かなければ、転送用の見出しを信じるかどうかの判断が要らず、ALBの月額もかかりません | なし |
+| AWSの資源の作り方 | 手作業、Terraform、CloudFormation | `deploy/terraform`のTerraformで作る。stateはバージョニングしたS3に置き、ロックはS3のロックファイルで取る | 手で作るとバージョニングの入れ忘れやロールへの権限の足しすぎを止められないので、設定を試験にかけられる形にしました。複数のクラウドで書き方が同じTerraformを選んだのは、ADR-0006で比べた他社へ移る余地を残すためです | ADR-0006 |
 | 証明書の更新 | 手作業、certbot、firstlineに内蔵 | Let's Encryptの証明書をcertbotが自動で更新し、firstlineはSIGHUPで読み直す | 更新を忘れて販売サイトにつながらなくなる事態をなくし、更新で再起動もしないためです | なし |
 | 利用者向け文字列の持ち方 | JSONファイル、Goのmap、`golang.org/x/text/message` | 言語ごとのGoのmapに置き、言語の照合は`golang.org/x/text/language`の`Matcher`で行う | 翻訳漏れをテストで検出でき、読み込みの失敗が起こりません | なし |
 | メールの送り方 | 処理中に直接送る、送信待ちの表を経由する | 状態の変更と同じトランザクションで`mail_outbox`表へ書き、送信用のゴルーチンが送る | 状態だけ変わってメールが送られない状態をなくすためです | なし |
@@ -33,6 +34,7 @@
 | 規模拡大の判断 | 感覚で決める、測れる値で決める | ADR-0003の基準に従う | 移る時期を測定結果で決めるためです | ADR-0003 |
 | 画面の技術 | React、Vue、`html/template`とhtmx | `html/template`でサーバーが描画し、部分の更新はhtmxの2.0.8以上で行う。htmxのファイルはバイナリに同梱する | ビルドの工程とnpmの依存が要らず、言語の切り替えと`http.CrossOriginProtection`をサーバー側だけで扱えるためです | なし |
 | 観測の構成 | CloudWatch、専用のサービス、OpenTelemetry | ログはsystemdがファイルへ追記したものをCloudWatch Agentで、指標はEMFでCloudWatchへ送る。エラーは`ErrorReporter`の差し替え口から報告する | 初期の費用を抑え、移る時期は測れる値で決めるためです | ADR-0005 |
+| 配備先 | AWS、Google Cloud、Azure、コンテナ、VM | AWSの東京リージョンのEC2の1台から始め、ADR-0006の段階で広げる | 最初の段階の月額が最も安く、SQLiteを置けるローカルのディスクがVMにしかないためです | ADR-0006 |
 
 ## 決定事項との対応表
 
@@ -57,6 +59,7 @@
 | メール | メール |
 | 文字列の言語 | 文字列の言語 |
 | 観測 | 観測、配備、ADR-0005 |
+| 配備先 | 配備、ADR-0006 |
 | 品質ゲート | 品質ゲート |
 
 要件書の「設計書で決めること」の1項目めにある設定値は、次の節に書いています。
@@ -77,7 +80,7 @@
 
 ## 構成
 
-firstlineは1台のLinuxホストで動く単一のGoバイナリです。HTTPの処理、書き込みゴルーチン、期限切れの処理、払い戻しの再試行、決済の照合、メールの送信が同じプロセスにあります。Litestreamは別のプロセスとして動き、WALをCloudflare R2へ送ります。
+firstlineは1台のLinuxホストで動く単一のGoバイナリです。HTTPの処理、書き込みゴルーチン、期限切れの処理、払い戻しの再試行、決済の照合、メールの送信が同じプロセスにあります。Litestreamは別のプロセスとして動き、WALを東京のS3へ送ります。
 
 各層はinterfaceで受け取り、`cmd/firstline`の組み立て関数1か所で注入する構成です。
 
@@ -445,13 +448,13 @@ type MetricsSink interface {
 
 `HealthSnapshot`は`/healthz`が返す項目を持つ構造体です。EMFの各行には送り先のロググループ`/firstline/metrics`を示す`LogGroupName`を入れます。`Emit`がエラーを返しても購入の処理には影響させず、捨てた回数をログに書きます。
 
-CloudWatchのアラームは次のとおりです。通知はSNSのトピックからメールで送ります。EMFの指標のアラームでは指標が届かないときも異常とみなします。値が届かない時間を正常として扱うのはエラーのアラームだけです。[メトリクスフィルタ](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/MonitoringLogData.html)は、ログの取り込みがない1分間には既定値も報告しないためです。
+CloudWatchのアラームは次のとおりです。通知はSNSのトピックからメールで送ります。宛先はTerraformの変数`alert_email`で渡します。最初のapplyの後に届く確認のメールのリンクを押すまで、通知は届きません。EMFの指標のアラームでは指標が届かないときも異常とみなします。値が届かない時間を正常として扱うのはエラーのアラームだけです。[メトリクスフィルタ](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/MonitoringLogData.html)は、ログの取り込みがない1分間には既定値も報告しないためです。
 
 | アラーム | 条件 |
 |---|---|
 | エラー | ERRORのログが5分で1件以上 |
 | 書き込みの詰まり | `queue_usage_avg_5m`が50%を超える |
-| 規模拡大の判断 | `sync_items_per_sec_max_5m`が、ADR-0003の限界負荷の50%を超える |
+| 規模拡大の判断 | `sync_items_per_sec_max_5m`が、ADR-0003の限界負荷の50%を超える。限界負荷は配備したホストで測るので、このアラームは測った値をTerraformの変数`limit_load_items_per_sec`に入れたときに作る |
 | WALの伸び | `wal_bytes`が1GiBを超える |
 | ディスク | CloudWatch Agentのディスクの使用率が50%を超える |
 | 証明書 | `tls_cert_days_left`が14を下回る |
@@ -495,7 +498,23 @@ firstlineは環境変数で設定します。
 
 ## 配備
 
-ホストはAWSのEC2の1台で、OSはUbuntu Server 24.04 LTSです。systemdでfirstlineとLitestreamのサービスを置き、CloudWatch Agentも同じホストで動かします。TLSは前段のプロキシを置かずにfirstlineが自分で終える構成です。EC2のセキュリティグループは443番と、証明書の検証に使う80番を外へ開きます。インスタンスロールには`CloudWatchAgentServerPolicy`を付けます。
+ホストはAWSの東京リージョン（`ap-northeast-1`）のEC2の1台です。インスタンスは`t4g.small`（Arm、2 vCPU、2GiB）で、OSはUbuntu Server 24.04 LTSです。クラウドを選んだ理由と段階ごとの構成はADR-0006に書いています。systemdでfirstlineとLitestreamのサービスを置き、CloudWatch Agentも同じホストで動かします。TLSは前段のプロキシを置かずにfirstlineが自分で終える構成です。
+
+下の表のネットワーク、権限、バケット、ホストと、「観測」の節のアラームとその通知は、`deploy/terraform`のTerraformで作ります。試験はモックのプロバイダーで表の値を確かめるので、AWSの認証情報は要りません。EC2とElastic IPには`prevent_destroy`を付けます。SQLiteは起動ディスクにあり、Elastic IPが変わるとDNSのAレコードが切れるので、作り直しや削除を含むplanはTerraformがエラーで止めます。
+
+ネットワークと権限は次のとおりです。ロードバランサーとNATゲートウェイは置きません。
+
+| 項目 | 設定 |
+|---|---|
+| サブネット | VPCにパブリックサブネットを1つ置き、インターネットゲートウェイで外とつなぐ |
+| 受信 | セキュリティグループで443番と、証明書の検証に使う80番だけを開く。22番は開けない |
+| 保守 | Session Managerで入る。受信ポートを開けずに済み、追加の料金もない |
+| 公開アドレス | Elastic IPを1つ付け、DNSのAレコードに使う。停止しても番号が変わらない |
+| S3への経路 | ゲートウェイ型のVPCエンドポイントを通す。料金はかからない |
+| インスタンスロール | `CloudWatchAgentServerPolicy`と`AmazonSSMManagedInstanceCore`に加え、複製先のバケットだけに`s3:GetBucketLocation`、`s3:ListBucket`、`s3:GetObject`、`s3:PutObject`、`s3:DeleteObject`を許す |
+| メタデータ | IMDSv2を必須にする。Litestreamとエージェントはロールの一時的な認証情報をここから取る |
+| ディスク | gp3の20GBを暗号化して使う |
+| バケット | 東京のS3に置き、パブリックアクセスをすべてブロックする。バージョニングを有効にし、ライフサイクル規則で古い版を30日後に消す。版を消す権限（`s3:DeleteObjectVersion`）とバケットの設定を変える権限はロールに与えない（下の段落） |
 
 | 項目 | `firstline.service` | `litestream.service` |
 |---|---|---|
@@ -515,7 +534,7 @@ firstlineは環境変数で設定します。
 | 通信の種類 | `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` | `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` |
 | 作るファイルの権限 | `UMask=0077`（DBと`litestream`の作業ファイルを他の利用者に読ませない） | `UMask=0077` |
 
-`/var/lib/firstline`（`0700`）と`/var/log/firstline`（`0750`）は、`deploy/tmpfiles-firstline.conf`を`/etc/tmpfiles.d/firstline.conf`に置き、`systemd-tmpfiles --create`で作ります。systemdは`StandardOutput=append:`のファイルを`LogsDirectory=`がディレクトリを作るより前に開くので、これがないと新しいホストで`firstline`が起動しません（状態209/STDOUT）。`litestream.env`にはR2の鍵が入るので、2つの環境変数のファイルはどちらも所有者を`firstline`、権限を`0600`にします。
+`/var/lib/firstline`（`0700`）と`/var/log/firstline`（`0750`）は、`deploy/tmpfiles-firstline.conf`を`/etc/tmpfiles.d/firstline.conf`に置き、`systemd-tmpfiles --create`で作ります。systemdは`StandardOutput=append:`のファイルを`LogsDirectory=`がディレクトリを作るより前に開くので、これがないと新しいホストで`firstline`が起動しません（状態209/STDOUT）。`litestream.env`には複製先のバケット名`LITESTREAM_BUCKET`だけを書き、鍵は置きません。2つの環境変数のファイルはどちらも所有者を`firstline`、権限を`0600`にします。
 
 `/var/log/firstline/app.log`はlogrotateで切り替えます。設定は`daily`、`maxsize 100M`、`rotate 7`、`compress`、`copytruncate`です。[logrotate](https://man7.org/linux/man-pages/man8/logrotate.8.html)は普段は1日に1回だけ動き、`maxsize`も動いた時点でしか見ません。そこで`logrotate.timer`のdrop-inで`OnCalendar=hourly`にし、毎時に大きさを見る構成です。ファイル1つの大きさは100MBに1時間分のログを足した量までに収まります。systemdは追記のモードでファイルを開くので、`copytruncate`で切り詰めた後も先頭から書き直されます。失われうるのは切り詰めの直前に書かれた数行のログだけで、購入の記録はDBにあるので影響しません。
 
@@ -536,33 +555,38 @@ firstlineは`http.Server`の`TLSConfig.Certificates`を空のままにし、`Lis
 
 更新の失敗に気づくため、firstlineは使っている証明書の期限までの日数を`/healthz`の`tls_cert_days_left`で返します。アラームが鳴るのはこの値が14日を切ったときです。
 
-LitestreamはWriteDBのファイルを1秒ごとにCloudflare R2へ送ります。使う版はv0.5.10以上です。`restore`の`-integrity-check`がこの版で入ったためです（[restoreの文書](https://litestream.io/reference/restore/)）。設定ファイル`/etc/litestream.yml`は次のとおりです。
+LitestreamはWriteDBのファイルを1秒ごとに東京のS3へ送ります。設定に鍵を書かないので、Litestreamは[AWS SDKの既定の認証の流れ](https://github.com/benbjohnson/litestream/blob/v0.5.18/s3/replica_client.go#L436-L451)でインスタンスロールを使います。使う版はv0.5.10以上です。`restore`の`-integrity-check`がこの版で入ったためです（[restoreの文書](https://litestream.io/reference/restore/)）。設定ファイル`/etc/litestream.yml`は次のとおりです。
 
 ```yaml
 dbs:
   - path: /var/lib/firstline/firstline.db
     replica:
       type: s3
-      bucket: firstline-backup
+      bucket: ${LITESTREAM_BUCKET}
       path: firstline.db
-      endpoint: ${CF_ACCOUNT_ID}.r2.cloudflarestorage.com
-      region: auto
-      access-key-id: ${R2_ACCESS_KEY}
-      secret-access-key: ${R2_SECRET_KEY}
+      region: ap-northeast-1
 ```
+
+EC2はインターネットから443番と80番を受けるので、乗っ取られてもバックアップを戻せる形にします。Litestreamは古いファイルを自分で消すため、ロールには`s3:DeleteObject`が要ります。そこでバケットの[バージョニング](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html)を有効にし、上書きは新しい版に、削除は削除マーカーにして、前の版をバケットに残す仕組みです。版そのものを消す`s3:DeleteObjectVersion`と、バージョニングやライフサイクル規則を変える権限はロールに与えません。現行でなくなった版はライフサイクル規則が30日後に消し、期限の切れた削除マーカーも同じ規則で片づけます。乗っ取りで上書きや削除をされたときは、運用者が自分の権限で次の2つを行ってから`scripts/restore.sh`を流してください。攻撃の前と後は版の作成時刻（`LastModified`）で見分けます。
+
+1. 攻撃の前からあったキーは攻撃の前の版を現行に戻します。
+2. 攻撃の後に作られたキーは消します。戻す先の版がなく、Litestreamは復元のときに複製先のキーを読むので、偽のファイルが1つ残るだけで復元が止まるためです。
+
+この手当てで戻せるのは30日の間に残っている版に限られます。
 
 Litestreamの複製は非同期です。[Litestreamの文書](https://litestream.io/tips/)によれば、ホストが壊れたときに失う範囲は直前の約1秒の変更です。この損失はADR-0001で制約として受け入れました。
 
 アプリは`wal_autocheckpoint=0`なので、Litestreamが止まるとWALが伸び続けます。
 
-CloudWatch Agentの設定は次のとおりです。journaldの収集に対応した版のCloudWatch Agentを使います。
+CloudWatch Agentの設定は次のとおりです。journaldの収集に対応した版のCloudWatch Agentを使います。ディスクの使用率は`aggregation_dimensions`で次元のない1つの系列にまとめ、元の系列は`drop_original_metrics`で送りません。Agentが既定で付ける`host`、`device`、`fstype`の次元はホストを作るまで値が決まらないので、アラームが次元を指定せずに済むようにするためです（[Agentの設定の文書](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Agent-Configuration-File-Details.html)）。
 
 ```json
 {
   "agent": { "metrics_collection_interval": 60 },
   "metrics": {
+    "aggregation_dimensions": [[]],
     "metrics_collected": {
-      "disk": { "resources": ["/"], "measurement": ["used_percent"] }
+      "disk": { "resources": ["/"], "measurement": ["disk_used_percent"], "drop_original_metrics": ["disk_used_percent"] }
     }
   },
   "logs": {

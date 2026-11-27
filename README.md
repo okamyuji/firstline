@@ -36,11 +36,15 @@ firstlineは1台のホストで1つのプロセスとして動きます。DBへ�
 | DB | SQLite（`modernc.org/sqlite`、cgoなし）。PostgreSQLとMySQLにも同じ差し替え口で対応します |
 | SQL | [Bun](https://bun.uptrace.dev/)の生SQL。方言ごとのSQLファイルを使います |
 | 画面 | サーバーで描画し、部分の更新に[htmx](https://htmx.org/)を使います |
-| 複製 | [Litestream](https://litestream.io/)でCloudflare R2へ送ります |
+| 複製 | [Litestream](https://litestream.io/)で東京のS3へ送ります |
 | 観測 | 構造化ログ、CloudWatchのEMF、`/healthz` |
 | 状態遷移の検証 | TLA+の仕様をTLCで検証します |
 
 決済とメールは差し替え口の裏にあり、今の実装は模擬実装です。模擬の決済は設定した遅延の後に完了か失敗を非同期で通知するので、鍵がなくてもすべての経路を試験で通せます。
+
+配備先はAWSの東京リージョンのEC2の1台です。ロードバランサーとNATゲートウェイは最初から置かず、アクセスが増えた段階でRDS、ALB、ECS on Fargateを足していく方針です。段階ごとの構成と月額、3社を比べた結果は[ADR-0006](docs/design/adr/ADR-0006-cloud-and-staged-topology.md)にあり、図の元の`.drawio`は[docs/design/diagrams](docs/design/diagrams/)に置いています。
+
+![段階1の構成](docs/design/diagrams/stage-1.png)
 
 設計の詳細は[基本設計書](docs/design/basic-design.md)と[ADR](docs/design/adr/)に書いてあります。
 
@@ -78,6 +82,33 @@ printf 'a-long-password\n' | ./firstline create-organizer -email organizer@examp
 
 設定の一覧は[deploy/firstline.env.example](deploy/firstline.env.example)にあります。本番の配備に使うsystemdのユニット、Litestream、CloudWatch Agentの設定も[deploy/](deploy/)に置いてあります。
 
+## AWSに配備する
+
+AWSの資源は[deploy/terraform](deploy/terraform/)のTerraformで作ります。対象はネットワーク、セキュリティグループ、インスタンスロール、バックアップのバケット、EC2、Elastic IP、CloudWatchのアラーム、通知のSNSです。
+
+1. stateを置くバケットを一度だけ作ります。
+
+   ```sh
+   cd deploy/terraform/bootstrap
+   terraform init
+   terraform apply -var state_bucket=<stateのバケット名>
+   ```
+
+2. 本体を作ります。planに`must be replaced`や`destroy`が出ていないことを見てからapplyしてください。
+
+   ```sh
+   cd deploy/terraform
+   terraform init -backend-config=bucket=<stateのバケット名> -backend-config=key=firstline.tfstate
+   terraform plan -var backup_bucket=<バックアップのバケット名> -var alert_email=<通知先のメールアドレス> -out=tfplan
+   terraform apply tfplan
+   ```
+
+3. `alert_email`に届くSNSの確認のメールのリンクを押します。押すまでアラームのメールは届きません。
+4. 出力の`elastic_ip`をDNSのAレコードに書き、`backup_bucket`を`/etc/firstline/litestream.env`の`LITESTREAM_BUCKET`に書きます。
+5. 受付を開く前に、[ADR-0003](docs/design/adr/ADR-0003-scale-out-criteria.md)の手順でこのホストの限界負荷を測ります。測った値を`-var limit_load_items_per_sec=<限界負荷>`に足してもう一度applyすると、規模拡大の判断のアラームができます。
+
+EC2とElastic IPには`prevent_destroy`を付けています。SQLiteのDBはEC2の起動ディスクにあるので、作り直しや削除を含むplanはTerraformがエラーで止めます。
+
 ## サブコマンド
 
 | コマンド | 役割 |
@@ -104,5 +135,7 @@ bash scripts/check.sh
 - 文書の表記の検証
 - 実際のバイナリを動かすE2E
 - TLCによる状態遷移の検証
+- Terraformの構成の検証（モックのプロバイダーを使うのでAWSの認証情報は要りません）
+- ADR-0006と構成図の金額が計算のスクリプトの出力と一致するかの照合
 
 PostgreSQLとMySQLの試験はtestcontainersでコンテナを起動するので、Dockerが要ります。TLCもJava 21入りのコンテナの中で動かすので、Javaを入れる必要はありません。

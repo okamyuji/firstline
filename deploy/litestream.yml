@@ -2,9 +2,6 @@ dbs:
   - path: /var/lib/firstline/firstline.db
     replica:
       type: s3
-      bucket: firstline-backup
+      bucket: ${LITESTREAM_BUCKET}
       path: firstline.db
-      endpoint: ${CF_ACCOUNT_ID}.r2.cloudflarestorage.com
-      region: auto
-      access-key-id: ${R2_ACCESS_KEY}
-      secret-access-key: ${R2_SECRET_KEY}
+      region: ap-northeast-1

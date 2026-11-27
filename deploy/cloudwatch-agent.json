@@ -1,8 +1,9 @@
 {
   "agent": { "metrics_collection_interval": 60 },
   "metrics": {
+    "aggregation_dimensions": [[]],
     "metrics_collected": {
-      "disk": { "resources": ["/"], "measurement": ["used_percent"] }
+      "disk": { "resources": ["/"], "measurement": ["disk_used_percent"], "drop_original_metrics": ["disk_used_percent"] }
     }
   },
   "logs": {

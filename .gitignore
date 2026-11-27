@@ -3,3 +3,10 @@
 *.out
 /e2e/tmp/
 /tmp/
+/.playwright-mcp/
+__pycache__/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.drawio.bkp

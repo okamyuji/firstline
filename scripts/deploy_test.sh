@@ -31,6 +31,25 @@ for unit in firstline litestream; do want_line "$deploy/$unit.service" "User=fir
 want_line "$deploy/firstline.service" "EnvironmentFile=/etc/firstline/env"
 want_line "$deploy/litestream.service" "EnvironmentFile=/etc/firstline/litestream.env"
 
+# Litestream writes to S3 in Tokyo with the instance role: no key may sit in the config.
+want_line "$deploy/litestream.yml" "      type: s3"
+want_line "$deploy/litestream.yml" "      region: ap-northeast-1"
+! grep -qE 'access-key-id|secret-access-key|endpoint:' "$deploy/litestream.yml" ||
+	fail "litestream.yml must not hold keys or an endpoint; the instance role signs the requests"
+# shellcheck disable=SC2016 # the dollar sign and the backquotes are literal text
+want_line "$deploy/litestream.yml" '      bucket: ${LITESTREAM_BUCKET}'
+# shellcheck disable=SC2016 # the dollar sign and the backquotes are literal text
+grep -qF '`LITESTREAM_BUCKET`' "$design" || fail "the design does not name LITESTREAM_BUCKET"
+# Litestream prunes its own files, so retention must stay on; S3 versioning keeps the old versions.
+! grep -A2 '^retention:' "$deploy/litestream.yml" | grep -qE '^ +enabled: *false' ||
+	fail "litestream.yml must keep retention enabled"
+# The role and bucket rows are the spec deploy/terraform is tested against; any edit to them,
+# such as another managed policy or versioning turned off, must be deliberate here too.
+# shellcheck disable=SC2016 # the backquotes are Markdown, not a command
+want_line "$design" '| インスタンスロール | `CloudWatchAgentServerPolicy`と`AmazonSSMManagedInstanceCore`に加え、複製先のバケットだけに`s3:GetBucketLocation`、`s3:ListBucket`、`s3:GetObject`、`s3:PutObject`、`s3:DeleteObject`を許す |'
+# shellcheck disable=SC2016 # the backquotes are Markdown, not a command
+want_line "$design" '| バケット | 東京のS3に置き、パブリックアクセスをすべてブロックする。バージョニングを有効にし、ライフサイクル規則で古い版を30日後に消す。版を消す権限（`s3:DeleteObjectVersion`）とバケットの設定を変える権限はロールに与えない（下の段落） |'
+
 # tmpfiles.d: StandardOutput=append: needs the log directory before the unit starts.
 want_line "$deploy/tmpfiles-firstline.conf" "d /var/lib/firstline 0700 firstline firstline -"
 want_line "$deploy/tmpfiles-firstline.conf" "d /var/log/firstline 0750 firstline firstline -"
@@ -80,4 +99,20 @@ done
 if LOG=$tmp/log PATH="$tmp/bin:$PATH" FIRSTLINE_TLS_DIR=$tmp/tls bash "$deploy/firstline-cert-deploy" 2>/dev/null; then
 	fail "hook ran without RENEWED_LINEAGE"
 fi
+# The terraform mock provider fills computed values at random, so tests/stage1.tftest.hcl
+# cannot see these two; check the text of the resource blocks instead.
+tf=$deploy/terraform/main.tf
+# block <type> <name> prints one resource block of main.tf.
+block() { awk -v h="resource \"$1\" \"$2\" {" '$0 == h { f = 1 } f { print } f && /^}$/ { exit }' "$tf"; }
+lc=$(block aws_s3_bucket_lifecycle_configuration backup)
+[ -n "$lc" ] || fail "main.tf has no lifecycle configuration for the backup bucket"
+grep -qxF '    filter {}' <<<"$lc" || fail "the lifecycle rule must use an empty filter, so it covers every object"
+! grep -qE '^ +(prefix|tag|and|object_size_)' <<<"$lc" || fail "the lifecycle rule must not narrow the objects it covers"
+host=$(block aws_instance host)
+grep -qxF '    ignore_changes  = [ami]' <<<"$host" ||
+	fail "aws_instance.host must ignore AMI changes, or a new Ubuntu image replaces the host and its database"
+# A plan that replaces or destroys the host would take the SQLite database on its root
+# disk with it, and a new Elastic IP would break the DNS record; terraform must refuse.
+grep -qxF '    prevent_destroy = true' <<<"$host" || fail "aws_instance.host must set prevent_destroy"
+grep -qxF '    prevent_destroy = true' <<<"$(block aws_eip host)" || fail "aws_eip.host must set prevent_destroy"
 echo "deploy_test: ok"

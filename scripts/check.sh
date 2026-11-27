@@ -72,6 +72,9 @@ else
 	echo "check.sh: shellcheck not found; skipped" >&2
 fi
 bash scripts/deploy_test.sh
+bash scripts/cloud_costs_test.sh
+echo "== terraform"
+bash scripts/terraform_test.sh
 bash scripts/restore_test.sh
 
 # cover_gate <profile> fails when the total statement coverage is below 80%.

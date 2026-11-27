@@ -15,7 +15,7 @@ for c in systemctl litestream runuser chown mv; do
 name=$(basename "$0")
 echo "$name $*" >>"$LOG"
 case $name in
-litestream) echo "env CF_ACCOUNT_ID=${CF_ACCOUNT_ID:-}" >>"$LOG" ;;
+litestream) echo "env LITESTREAM_BUCKET=${LITESTREAM_BUCKET:-}" >>"$LOG" ;;
 runuser) echo "env FIRSTLINE_STORE=${FIRSTLINE_STORE:-} FIRSTLINE_DSN=${FIRSTLINE_DSN:-}" >>"$LOG" ;;
 esac
 [ "${FAKE_FAIL:-}" = "$name" ] && exit 1
@@ -27,7 +27,7 @@ exit 0
 FAKE
 	chmod +x "$tmp/bin/$c"
 done
-echo "CF_ACCOUNT_ID=not-a-real-id" >"$tmp/litestream.env"
+echo "LITESTREAM_BUCKET=not-a-real-bucket" >"$tmp/litestream.env"
 # systemd's EnvironmentFile takes the value verbatim; a shell would cut it at & and expand $HOME.
 cat >"$tmp/env" <<'ENV'
 # comment
@@ -64,7 +64,7 @@ mv DATA/firstline.db-shm BACKUP/'
 run 2026-11-26T10:00:00Z
 want="$want_head
 litestream restore -config /etc/litestream.yml -integrity-check quick -timestamp 2026-11-26T10:00:00Z DATA/firstline.db
-env CF_ACCOUNT_ID=not-a-real-id
+env LITESTREAM_BUCKET=not-a-real-bucket
 chown firstline DATA/firstline.db
 systemctl start litestream
 runuser -u firstline -- firstline reconcile --since 2026-11-26T09:50:00Z

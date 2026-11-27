@@ -8,7 +8,7 @@ firstlineは先着チケットと整理券の販売サービスで、販売開�
 
 ## 決定
 
-AWSのEC2の1台（Linux）で、SQLiteを組み込んだ単一のGoバイナリを動かします。SQLiteドライバはcgoの要らない`modernc.org/sqlite`です。
+AWSの東京リージョンのEC2の1台（Linux）で、SQLiteを組み込んだ単一のGoバイナリを動かします。クラウドを選んだ理由と段階ごとの構成はADR-0006で決めています。SQLiteドライバはcgoの要らない`modernc.org/sqlite`です。
 
 | 項目 | 決定 |
 |---|---|
@@ -17,7 +17,7 @@ AWSのEC2の1台（Linux）で、SQLiteを組み込んだ単一のGoバイナリ
 | 書き込み | 書き込みゴルーチン1つが、容量8192のチャネルから項目を受けてグループコミットする |
 | 在庫 | 正本は`event_sales.remaining`の条件付きの更新にする。`Inventory`のメモリ実装を事前判定に置き、起動時にWriteDBから作り直す |
 | チェックポイント | アプリは`wal_autocheckpoint=0`にし、Litestreamに任せる |
-| 複製 | LitestreamでCloudflare R2へ1秒ごとに送る |
+| 複製 | Litestreamで東京のS3へ1秒ごとに送る。鍵は置かず、インスタンスロールで書く |
 
 設定値の詳細は基本設計書の「接続設定」と「配備」の節にあります。
 
