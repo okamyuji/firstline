@@ -538,18 +538,56 @@ firstlineは環境変数で設定します。
 
 `/var/log/firstline/app.log`はlogrotateで切り替えます。設定は`daily`、`maxsize 100M`、`rotate 7`、`compress`、`copytruncate`です。[logrotate](https://man7.org/linux/man-pages/man8/logrotate.8.html)は普段は1日に1回だけ動き、`maxsize`も動いた時点でしか見ません。そこで`logrotate.timer`のdrop-inで`OnCalendar=hourly`にし、毎時に大きさを見る構成です。ファイル1つの大きさは100MBに1時間分のログを足した量までに収まります。systemdは追記のモードでファイルを開くので、`copytruncate`で切り詰めた後も先頭から書き直されます。失われうるのは切り詰めの直前に書かれた数行のログだけで、購入の記録はDBにあるので影響しません。
 
+### 導入
+
+ホストへの導入を受け持つのは`deploy/firstline-install`です。Terraformはこのスクリプトと`/etc/firstline/install.env`をcloud-initの`write_files`でホストに置き、`runcmd`で最初の起動のときに1回だけ動かします。`install.env`に書くのは`FIRSTLINE_VERSION`、`FIRSTLINE_SHA256`、`FIRSTLINE_DOMAIN`、`FIRSTLINE_ACME_EMAIL`、`LITESTREAM_BUCKET`、`FIRSTLINE_TOKEN_PARAM`で、秘密の値は含みません。user dataはgzipで圧縮し、EC2の16KBの上限に収める設計です。user dataの変更でホストが作り直されたり再起動したりしないよう、`user_data_replace_on_change`を`false`にし、`ignore_changes`にも入れています。
+
+firstlineの取得元はGitHub Releasesです。`v`で始まるタグを押すとGitHub Actionsが`cmd/firstline`を`linux/arm64`向けに作り、`deploy/`のうち`terraform/`を除くファイルと合わせて`firstline-<タグ>-linux-arm64.tar.gz`にまとめます。SHA-256はリリースノートに載せ、Terraformの`firstline_sha256`に渡します。
+
+スクリプトの手順は次のとおりです。
+
+1. `firstline`のシステムユーザーがなければ作ります。
+2. aptでcertbotとlogrotateを入れます。
+3. Litestream v0.5.18とCloudWatch Agentのarm64のdebを取り、スクリプトに書いたSHA-256と照らしてから入れます。同じ版が入っていれば取りません。
+4. firstlineのtarballを取り、`FIRSTLINE_SHA256`と照らしてから展開し、下の表の場所へ置きます。
+5. IMDSv2からロールの一時的な認証情報を取り、`curl --aws-sigv4`でParameter Storeの`GetParameter`を`WithDecryption`付きで呼んで署名鍵を読みます。AWS CLIは使いません。
+6. `/etc/firstline/env`に`FIRSTLINE_TOKEN_KEY`と`FIRSTLINE_BASE_URL`（`https://<ドメイン>`）を、`/etc/firstline/litestream.env`に`LITESTREAM_BUCKET`を書きます。
+7. tmpfilesを適用し、certbotの更新のタイマー、Litestream、CloudWatch Agentを起動します。
+8. 証明書があればfirstlineを再起動し、なければ`firstline-cert-init.timer`を有効にします。
+
+| `deploy/`のファイル | ホストの置き場 |
+|---|---|
+| `firstline`（tarballの中のバイナリ） | `/usr/local/bin/firstline` |
+| `firstline-install` | `/usr/local/sbin/firstline-install` |
+| `firstline-cert-deploy`、`firstline-cert-init` | `/usr/local/bin/` |
+| `firstline.service`、`litestream.service`、`firstline-cert-init.service`、`firstline-cert-init.timer` | `/etc/systemd/system/` |
+| `logrotate.timer.d/hourly.conf` | `/etc/systemd/system/logrotate.timer.d/hourly.conf` |
+| `tmpfiles-firstline.conf` | `/etc/tmpfiles.d/firstline.conf` |
+| `logrotate-firstline` | `/etc/logrotate.d/firstline` |
+| `litestream.yml` | `/etc/litestream.yml` |
+| `cloudwatch-agent.json` | `/etc/firstline/cloudwatch-agent.json` |
+| `firstline.env.example` | `/etc/firstline/env`の元 |
+
+署名鍵はParameter StoreのSecureString `/firstline/token-key`に置き、AWS管理のキー`aws/ssm`で暗号化します。`AmazonSSMManagedInstanceCore`はすべてのパラメータに`ssm:GetParameter`を許しています（[ポリシーの文書](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonSSMManagedInstanceCore.html)）。`aws/ssm`はアカウントのすべてのIAMプリンシパルに復号を許すので（[Parameter Storeの権限の文書](https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-paramstore-access.html)）、ロールに足す権限はありません。値はuser dataにもTerraformのstateにも入りません。ロールの鍵は標準入力からcurlに渡し、署名鍵はシェルの組み込みの`printf`でファイルに書きます。どちらもコマンドラインに載らず、スクリプトの出力にも出ません。
+
+`/etc/firstline/env`がすでにあるときは、`FIRSTLINE_TOKEN_KEY`と`FIRSTLINE_BASE_URL`の行だけを書き換え、ほかの行は残します。この2つはParameter Storeと`install.env`に従う値で、ほかの値は運用者が調整するものだからです。`put-parameter --overwrite`のあとにスクリプトを動かせば鍵が替わり、運用者が手で変えた値は版を上げても消えません。
+
+版を上げるときは、Session Managerで`install.env`の`FIRSTLINE_VERSION`と`FIRSTLINE_SHA256`を書き換え、`/usr/local/sbin/firstline-install`を動かします。スクリプトは同じ手順で新しい版を置き、firstlineを再起動します。tarballに入っている新しい`firstline-install`も置くので、次の版上げに使われるのは新しいスクリプトです。スクリプトを2回続けて動かしても置かれるファイルは同じです。
+
 ### 証明書
 
 証明書はLet's Encryptから[certbot](https://eff-certbot.readthedocs.io/en/stable/using.html)のstandalone方式で取ります。standalone方式は検証のためにポート80で待ち受けます。firstlineは443番だけを使うので、ポート80を取り合うことはありません。
 
-最初の証明書は`certbot certonly --standalone -d <ドメイン> --deploy-hook /usr/local/bin/firstline-cert-deploy`で取ります。`--deploy-hook`は発行と更新のどちらでも、成功したときだけ動きます。certbotはこの指定を更新の設定に保存するので、以後の更新でも同じスクリプトが動く仕組みです。更新そのものはcertbotのパッケージが入れるsystemdのタイマーが`certbot renew`を定期的に実行して行います。
+最初の証明書は`firstline-cert-init.service`が`certbot certonly --standalone -d <ドメイン> -m <メールアドレス> --agree-tos -n --deploy-hook /usr/local/bin/firstline-cert-deploy`で取ります。`--deploy-hook`は発行と更新のどちらでも、成功したときだけ動きます。certbotはこの指定を更新の設定に保存するので、以後の更新でも同じスクリプトが動く仕組みです。更新そのものはcertbotのパッケージが入れるsystemdのタイマーが`certbot renew`を定期的に実行して行います。
 
 `/usr/local/bin/firstline-cert-deploy`の手順は次のとおりです。
 
 1. `$RENEWED_LINEAGE`の`fullchain.pem`と`privkey.pem`を、`install -m 0600 -o firstline`で`/etc/firstline/tls/`の一時ファイルへ置き、`mv`で正式の名前に置き換えます。秘密鍵がほかの利用者に読める時間はできません。
 2. `systemctl try-reload-or-restart firstline`を実行します。firstlineが動いていればSIGHUPを送り、動いていなければ何もしません。
 
-最初の発行ではfirstlineがまだ動いていないので、スクリプトの手順2は何もしません。その後で`firstline`のサービスを起動してください。`FIRSTLINE_TLS_CERT`と`FIRSTLINE_TLS_KEY`は`/etc/firstline/tls/fullchain.pem`と`/etc/firstline/tls/privkey.pem`を指します。
+最初の発行ではfirstlineがまだ動いていないので、スクリプトの手順2は何もしません。firstlineを起動するのは`firstline-cert-init`の役目です。
+
+`firstline-cert-init.timer`は有効にした直後と、その後5分ごとに`firstline-cert-init.service`を動かします。このサービスは`/etc/firstline/tls/fullchain.pem`があれば何もしません。証明書がないときは、まずIMDSv2からホストの公開アドレスを取り、ドメインがそのアドレスを引けるかを確かめます。Let's Encryptは検証の失敗を1つのドメインにつき1時間に5回までしか認めず、1,152回続けて失敗するとそのドメインの発行を止めます（[Let's Encryptの制限](https://letsencrypt.org/docs/rate-limits/)）。DNSのAレコードを書くまでcertbotを呼ばないのは、この上限を使い切らないためです。アドレスが合えばcertbotで証明書を取り、成功したら`systemctl enable --now firstline`でfirstlineを起動してタイマーを止める流れです。`FIRSTLINE_TLS_CERT`と`FIRSTLINE_TLS_KEY`は`/etc/firstline/tls/fullchain.pem`と`/etc/firstline/tls/privkey.pem`を指します。
 
 firstlineは`http.Server`の`TLSConfig.Certificates`を空のままにし、`ListenAndServeTLS("", "")`で待ち受けます。`Certificates`が空なら、どの接続でも`GetCertificate`が呼ばれるためです。SIGHUPを受けると証明書と秘密鍵を読み直し、`GetCertificate`が返す証明書を`atomic.Pointer`で入れ替えます。SIGHUPの受け口は起動の最初に作ります。受け口がない間にSIGHUPが届くと、Goのプロセスは終了し、systemdの`Restart=on-failure`はその終了を再起動しないためです。読み直しに失敗したら古い証明書を使い続け、ERRORのログを書きます。再起動しないので、更新の時刻が販売中でも接続は途切れません。
 

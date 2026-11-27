@@ -94,18 +94,41 @@ AWSの資源は[deploy/terraform](deploy/terraform/)のTerraformで作ります�
    terraform apply -var state_bucket=<stateのバケット名>
    ```
 
-2. 本体を作ります。planに`must be replaced`や`destroy`が出ていないことを見てからapplyしてください。
+2. トークンの署名鍵をParameter StoreのSecureStringに登録します。鍵はAWS管理のキー`aws/ssm`で暗号化されるので、`--key-id`は付けません。ホストのロールは追加の権限なしでこの値を読めます。
+
+   ```sh
+   aws ssm put-parameter --type SecureString --name /firstline/token-key --value "$(openssl rand -base64 48)"
+   ```
+
+3. リリースのタグを付けて押します。GitHub Actionsが`firstline-<タグ>-linux-arm64.tar.gz`を作り、リリースに添えます。SHA-256はリリースノートとジョブのログに載ります。
+
+   ```sh
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+
+4. 本体を作ります。`domain`はAレコードを書くホスト名、`firstline_version`は手順3のタグ、`firstline_sha256`はリリースノートのSHA-256です。planに`must be replaced`や`destroy`が出ていないことを見てからapplyしてください。
 
    ```sh
    cd deploy/terraform
    terraform init -backend-config=bucket=<stateのバケット名> -backend-config=key=firstline.tfstate
-   terraform plan -var backup_bucket=<バックアップのバケット名> -var alert_email=<通知先のメールアドレス> -out=tfplan
+   terraform plan -var backup_bucket=<バックアップのバケット名> -var alert_email=<通知先のメールアドレス> \
+     -var domain=<ホスト名> -var firstline_version=v0.1.0 -var firstline_sha256=<SHA-256> -out=tfplan
    terraform apply tfplan
    ```
 
-3. `alert_email`に届くSNSの確認のメールのリンクを押します。押すまでアラームのメールは届きません。
-4. 出力の`elastic_ip`をDNSのAレコードに書き、`backup_bucket`を`/etc/firstline/litestream.env`の`LITESTREAM_BUCKET`に書きます。
-5. 受付を開く前に、[ADR-0003](docs/design/adr/ADR-0003-scale-out-criteria.md)の手順でこのホストの限界負荷を測ります。測った値を`-var limit_load_items_per_sec=<限界負荷>`に足してもう一度applyすると、規模拡大の判断のアラームができます。
+   EC2は最初の起動で`/usr/local/sbin/firstline-install`を動かします。このスクリプトはfirstline、Litestream、CloudWatch Agent、certbotを入れ、署名鍵をParameter Storeから読み、LitestreamとCloudWatch Agentを起動します。
+5. `alert_email`に届くSNSの確認のメールのリンクを押します。押すまでアラームのメールは届きません。
+6. 出力の`elastic_ip`を`domain`のAレコードに書きます。名前がこのアドレスを引けるようになると、5分ごとに動く`firstline-cert-init.timer`が証明書を取り、firstlineを起動します。証明書の更新の通知は`alert_email`に届きます。
+7. 受付を開く前に、[ADR-0003](docs/design/adr/ADR-0003-scale-out-criteria.md)の手順でこのホストの限界負荷を測ります。測った値を`-var limit_load_items_per_sec=<限界負荷>`に足してもう一度applyすると、規模拡大の判断のアラームができます。
+
+新しい版に上げるときは、タグを付けてリリースを作り、Session Managerでホストに入って次を実行します。`/etc/firstline/install.env`の`FIRSTLINE_VERSION`と`FIRSTLINE_SHA256`を新しいタグとSHA-256に書き換えてから、スクリプトを動かしてください。スクリプトは新しい版を入れてfirstlineを再起動します。`/etc/firstline/env`のうち書き換えるのは`FIRSTLINE_TOKEN_KEY`と`FIRSTLINE_BASE_URL`だけで、運用者が変えたほかの値は残ります。
+
+```sh
+sudo /usr/local/sbin/firstline-install
+```
+
+Terraformの`firstline_version`と`firstline_sha256`も同じ値に直しておいてください。user dataの変更は既存のホストに届かず、この値は作り直したホストが最初に入れる版として使われるだけです。署名鍵を替える手順も同じで、`aws ssm put-parameter --overwrite`で値を上書きしてからこのスクリプトを動かすだけです。
 
 EC2とElastic IPには`prevent_destroy`を付けています。SQLiteのDBはEC2の起動ディスクにあるので、作り直しや削除を含むplanはTerraformがエラーで止めます。
 
