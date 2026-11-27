@@ -22,8 +22,10 @@ etc=$root/etc/firstline
 log() { echo "firstline-install: $*"; }
 die() { echo "firstline-install: $*" >&2; exit 1; }
 
-# load_env reads KEY=VALUE lines verbatim, as systemd's EnvironmentFile does, since
-# firstline-cert-init.service reads the same file. Only this script's own keys are
+# load_env reads KEY=VALUE lines verbatim. firstline-cert-init.service reads the same
+# file through systemd's EnvironmentFile, which parses quotes, backslashes and lines
+# without "=" differently; Terraform writes none of those, so the two agree on the
+# file it writes. Only this script's own keys are
 # taken, so a stray PATH or LD_PRELOAD line cannot change what runs as root.
 load_env() {
 	local line key

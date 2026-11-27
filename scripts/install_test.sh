@@ -132,6 +132,11 @@ reset_host
 if FAKE_SECRET_OVERRIDE='abc\nFIRSTLINE_ADDR=:80' install; then fail "install passed with a line break in the secret"; fi
 grep -q 'control character' "$tmp/out" || fail "no message for the line break: $(cat "$tmp/out")"
 [ ! -e "$host/etc/firstline/env" ] || fail "env written from a secret with a line break"
+# Any control character, not only a line break: systemd's parser treats a tab or a CR
+# in a value differently from the shell.
+reset_host
+if FAKE_SECRET_OVERRIDE='abc\tdef' install; then fail "install passed with a tab in the secret"; fi
+grep -q 'control character' "$tmp/out" || fail "no message for the tab: $(cat "$tmp/out")"
 
 # Until the Elastic IP is associated the host has no route out: wait, then go on.
 reset_host
@@ -214,7 +219,8 @@ FAKE_DNS=192.0.2.100 cert_init || fail "cert-init failed while DNS points elsewh
 ! grep -q '^certbot' "$tmp/log" || fail "certbot ran when DNS named 192.0.2.100, not the host's 192.0.2.10"
 # Let's Encrypt allows 5 failed validations per hostname per hour; 15 minutes keeps a
 # failing certbot at 4.
-grep -qxF 'OnUnitActiveSec=15min' "$root/deploy/firstline-cert-init.timer" || fail "the timer would retry more than 4 times an hour"
+[ "$(grep -E '^On' "$root/deploy/firstline-cert-init.timer")" = "OnActiveSec=0
+OnUnitActiveSec=15min" ] || fail "the timer would retry more than 4 times an hour"
 : >"$tmp/log"
 FAKE_DNS=192.0.2.10 FAKE_CERTBOT_FAIL=1 cert_init && fail "cert-init passed when certbot failed"
 ! grep -q '^systemctl' "$tmp/log" || fail "systemctl ran after certbot failed"
