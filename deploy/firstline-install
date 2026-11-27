@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# Installs or upgrades firstline on the EC2 host; run as root. cloud-init runs it at
+# first boot, and operators run it again through Session Manager to upgrade.
+# Settings come from /etc/firstline/install.env, which holds no secret.
+set -euo pipefail
+
+# The overrides exist for scripts/install_test.sh and the container run; the host
+# uses the defaults.
+root=${FIRSTLINE_ROOT:-}
+release_url=${FIRSTLINE_RELEASE_URL:-https://github.com/okamyuji/firstline/releases/download}
+imds_url=${FIRSTLINE_IMDS_URL:-http://169.254.169.254}
+ssm_url=${FIRSTLINE_SSM_URL:-https://ssm.ap-northeast-1.amazonaws.com}
+
+litestream_version=0.5.18
+litestream_url=https://github.com/benbjohnson/litestream/releases/download/v$litestream_version/litestream-$litestream_version-linux-arm64.deb
+litestream_sha256=4a19d2f19e65e1e9b99d47708d2e6135c10ab64fce973d35745a87c72656720e
+cwagent_version=1.300075.0b2061
+cwagent_url=https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/arm64/$cwagent_version/amazon-cloudwatch-agent.deb
+cwagent_sha256=05ab93819738c616baf7680693e56de0107225edb5371586b1b4d4d7042054db
+
+etc=$root/etc/firstline
+log() { echo "firstline-install: $*"; }
+die() { echo "firstline-install: $*" >&2; exit 1; }
+
+# load_env reads KEY=VALUE lines verbatim, as systemd's EnvironmentFile does, since
+# firstline-cert-init.service reads the same file.
+load_env() {
+	local line
+	while IFS= read -r line || [ -n "$line" ]; do
+		case $line in '' | '#'*) continue ;; esac
+		export "${line%%=*}=${line#*=}"
+	done <"$1"
+}
+load_env "$etc/install.env"
+: "${FIRSTLINE_DOMAIN:?not set in install.env}" "${FIRSTLINE_ACME_EMAIL:?not set in install.env}"
+: "${LITESTREAM_BUCKET:?not set in install.env}"
+param=${FIRSTLINE_TOKEN_PARAM:-/firstline/token-key}
+# The version and hash end up in a URL and a comparison; refuse anything else.
+[[ ${FIRSTLINE_VERSION:-} =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "FIRSTLINE_VERSION must look like v1.2.3"
+[[ ${FIRSTLINE_SHA256:-} =~ ^[0-9a-f]{64}$ ]] || die "FIRSTLINE_SHA256 must be 64 lowercase hex characters"
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/firstline-install.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+
+# fetch <url> <sha256> <file> downloads and stops unless the file has that hash.
+fetch() {
+	curl -fsSL --retry 3 -o "$3" "$1"
+	local got
+	got=$(sha256sum "$3" | cut -d' ' -f1)
+	[ "$got" = "$2" ] || die "SHA-256 mismatch for $1: got $got, want $2"
+}
+
+# install_deb <package> <version> <url> <sha256> skips a package already at the pinned
+# version: reinstalling would only stop and start its service.
+install_deb() {
+	if [ "$(dpkg-query -W -f='${Version}' "$1" 2>/dev/null)" = "$2" ]; then return; fi
+	log "installing $1 $2"
+	fetch "$3" "$4" "$work/$1.deb"
+	# confold keeps /etc/litestream.yml, which this script replaces below, without a prompt.
+	dpkg -i --force-confold "$work/$1.deb"
+}
+
+id -u firstline >/dev/null 2>&1 ||
+	useradd --system --user-group --home-dir /var/lib/firstline --no-create-home --shell /usr/sbin/nologin firstline
+
+log "installing certbot and logrotate"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -q
+apt-get install -y -q certbot logrotate
+
+install_deb litestream "$litestream_version" "$litestream_url" "$litestream_sha256"
+install_deb amazon-cloudwatch-agent "$cwagent_version-1" "$cwagent_url" "$cwagent_sha256"
+
+log "installing firstline $FIRSTLINE_VERSION"
+tarball=firstline-$FIRSTLINE_VERSION-linux-arm64.tar.gz
+fetch "$release_url/$FIRSTLINE_VERSION/$tarball" "$FIRSTLINE_SHA256" "$work/$tarball"
+pkg=$work/pkg
+mkdir "$pkg"
+tar -xzf "$work/$tarball" -C "$pkg"
+
+unit_dir=$root/etc/systemd/system
+install -d "$root/usr/local/bin" "$root/usr/local/sbin" "$unit_dir/logrotate.timer.d" \
+	"$root/etc/tmpfiles.d" "$root/etc/logrotate.d" "$etc/tls"
+install -m 0755 "$pkg/firstline" "$pkg/firstline-cert-deploy" "$pkg/firstline-cert-init" "$root/usr/local/bin/"
+# The next upgrade runs the script of this release.
+install -m 0755 "$pkg/firstline-install" "$root/usr/local/sbin/"
+install -m 0644 "$pkg/firstline.service" "$pkg/litestream.service" \
+	"$pkg/firstline-cert-init.service" "$pkg/firstline-cert-init.timer" "$unit_dir/"
+install -m 0644 "$pkg/logrotate.timer.d/hourly.conf" "$unit_dir/logrotate.timer.d/"
+install -m 0644 "$pkg/tmpfiles-firstline.conf" "$root/etc/tmpfiles.d/firstline.conf"
+install -m 0644 "$pkg/logrotate-firstline" "$root/etc/logrotate.d/firstline"
+install -m 0644 "$pkg/litestream.yml" "$root/etc/litestream.yml"
+install -m 0644 "$pkg/cloudwatch-agent.json" "$etc/cloudwatch-agent.json"
+# firstline reads its certificate here; the deploy hook writes into it.
+chown root:firstline "$etc/tls"
+chmod 0750 "$etc/tls"
+
+log "reading $param from Parameter Store"
+imds_token=$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 300' "$imds_url/latest/api/token")
+role=$(curl -fsS -H "X-aws-ec2-metadata-token: $imds_token" "$imds_url/latest/meta-data/iam/security-credentials/")
+creds=$(curl -fsS -H "X-aws-ec2-metadata-token: $imds_token" "$imds_url/latest/meta-data/iam/security-credentials/$role")
+{ read -r access_key && read -r secret_key && read -r session_token; } < <(
+	python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["AccessKeyId"]); print(c["SecretAccessKey"]); print(c["Token"])' <<<"$creds"
+)
+# The keys go to curl through its config on stdin, so they never sit on a command line.
+response=$(curl -fsS --aws-sigv4 aws:amz:ap-northeast-1:ssm -K - \
+	-H 'Content-Type: application/x-amz-json-1.1' -H 'X-Amz-Target: AmazonSSM.GetParameter' \
+	-d "{\"Name\":\"$param\",\"WithDecryption\":true}" "$ssm_url/" <<CONFIG
+user = "$access_key:$secret_key"
+header = "x-amz-security-token: $session_token"
+CONFIG
+)
+FIRSTLINE_TOKEN_KEY=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["Parameter"]["Value"])' <<<"$response")
+[ -n "$FIRSTLINE_TOKEN_KEY" ] || die "$param is empty"
+# shellcheck disable=SC2034 # set_env reads it by name
+FIRSTLINE_BASE_URL=https://$FIRSTLINE_DOMAIN
+
+# set_env <file> <template> <key>... writes the file from the file itself (or the
+# template on a new host), replacing only the named keys with the shell variables of
+# the same name. The secret and the domain follow Parameter Store and install.env, so
+# rotating the key is put-parameter plus a rerun; every other value is the operator's
+# to tune, and an upgrade must not undo it. printf is a builtin, so the secret never
+# reaches a command line.
+set_env() {
+	local file=$1 src=$2 line key seen=" " tmp
+	shift 2
+	[ -e "$file" ] && src=$file
+	tmp=$(mktemp "$file.XXXXXX")
+	while IFS= read -r line || [ -n "$line" ]; do
+		key=${line%%=*}
+		if [[ $line == *=* && " $* " == *" $key "* ]]; then
+			printf '%s=%s\n' "$key" "${!key}"
+			seen+="$key "
+		else
+			printf '%s\n' "$line"
+		fi
+	done <"$src" >"$tmp"
+	for key; do
+		[[ $seen == *" $key "* ]] || printf '%s=%s\n' "$key" "${!key}" >>"$tmp"
+	done
+	chown firstline:firstline "$tmp"
+	mv "$tmp" "$file"
+}
+set_env "$etc/env" "$pkg/firstline.env.example" FIRSTLINE_TOKEN_KEY FIRSTLINE_BASE_URL
+set_env "$etc/litestream.env" /dev/null LITESTREAM_BUCKET
+
+log "starting litestream and the CloudWatch Agent"
+systemd-tmpfiles --create "$root/etc/tmpfiles.d/firstline.conf"
+systemctl daemon-reload
+# The package enables its renewal timer, but a policy-rc.d (as in container images)
+# keeps it from starting until the next boot.
+systemctl enable --now certbot.timer
+systemctl enable litestream
+systemctl restart litestream
+PATH=$PATH:/opt/aws/amazon-cloudwatch-agent/bin \
+	amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c "file:$etc/cloudwatch-agent.json" -s
+
+if [ -e "$etc/tls/fullchain.pem" ]; then
+	log "certificate present; restarting firstline"
+	systemctl disable --now firstline-cert-init.timer
+	systemctl enable firstline
+	systemctl restart firstline
+else
+	log "no certificate yet; firstline-cert-init.timer obtains it once $FIRSTLINE_DOMAIN points at this host"
+	systemctl enable --now firstline-cert-init.timer
+fi
+log "done"

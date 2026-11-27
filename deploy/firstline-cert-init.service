@@ -1,0 +1,10 @@
+[Unit]
+Description=Obtain the first TLS certificate for firstline
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/etc/firstline/tls/fullchain.pem
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/firstline/install.env
+ExecStart=/usr/local/bin/firstline-cert-init

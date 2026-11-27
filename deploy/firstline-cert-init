@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Run by firstline-cert-init.service every 5 minutes until the first certificate
+# exists: obtains it, then starts firstline and stops the timer.
+set -euo pipefail
+imds_url=${FIRSTLINE_IMDS_URL:-http://169.254.169.254}
+domain=${FIRSTLINE_DOMAIN:?FIRSTLINE_DOMAIN is not set}
+email=${FIRSTLINE_ACME_EMAIL:?FIRSTLINE_ACME_EMAIL is not set}
+
+# Let's Encrypt allows 5 failed validations per domain per hour and pauses the domain
+# after 1,152 in a row, so certbot runs only once the A record names this host.
+token=$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' "$imds_url/latest/api/token")
+ip=$(curl -fsS -H "X-aws-ec2-metadata-token: $token" "$imds_url/latest/meta-data/public-ipv4")
+if ! getent ahostsv4 "$domain" | awk '{ print $1 }' | grep -qxF "$ip"; then
+	echo "firstline-cert-init: $domain does not resolve to $ip yet; retrying later"
+	exit 0
+fi
+
+certbot certonly --standalone -d "$domain" -m "$email" --agree-tos -n --deploy-hook /usr/local/bin/firstline-cert-deploy
+systemctl enable --now firstline
+systemctl disable --now firstline-cert-init.timer

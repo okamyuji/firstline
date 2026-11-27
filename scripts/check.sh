@@ -67,11 +67,12 @@ go build ./...
 
 echo "== deploy"
 if command -v shellcheck >/dev/null 2>&1; then
-	shellcheck scripts/*.sh deploy/firstline-cert-deploy
+	shellcheck scripts/*.sh deploy/firstline-cert-deploy deploy/firstline-cert-init deploy/firstline-install
 else
 	echo "check.sh: shellcheck not found; skipped" >&2
 fi
 bash scripts/deploy_test.sh
+bash scripts/install_test.sh
 bash scripts/cloud_costs_test.sh
 echo "== terraform"
 bash scripts/terraform_test.sh
