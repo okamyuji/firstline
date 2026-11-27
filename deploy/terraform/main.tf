@@ -1,0 +1,201 @@
+data "aws_ssm_parameter" "ubuntu" {
+  name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
+}
+
+resource "aws_vpc" "main" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+  tags                 = { Name = "firstline" }
+}
+
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
+}
+
+resource "aws_subnet" "public" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.0.0/24"
+  availability_zone = "ap-northeast-1a"
+  tags              = { Name = "firstline-public" }
+}
+
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
+  }
+}
+
+resource "aws_route_table_association" "public" {
+  subnet_id      = aws_subnet.public.id
+  route_table_id = aws_route_table.public.id
+}
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.ap-northeast-1.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = [aws_route_table.public.id]
+}
+
+resource "aws_security_group" "host" {
+  name   = "firstline-host"
+  vpc_id = aws_vpc.main.id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "web" {
+  for_each = { https = 443, http = 80 }
+
+  security_group_id = aws_security_group.host.id
+  description       = each.key
+  ip_protocol       = "tcp"
+  from_port         = each.value
+  to_port           = each.value
+  cidr_ipv4         = "0.0.0.0/0"
+}
+
+# Let's Encrypt, Session Manager, CloudWatch and mail all leave from the host.
+resource "aws_vpc_security_group_egress_rule" "all" {
+  security_group_id = aws_security_group.host.id
+  ip_protocol       = "-1"
+  cidr_ipv4         = "0.0.0.0/0"
+}
+
+resource "aws_s3_bucket" "backup" {
+  bucket        = var.backup_bucket
+  force_destroy = false
+}
+
+resource "aws_s3_bucket_versioning" "backup" {
+  bucket = aws_s3_bucket.backup.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "backup" {
+  bucket = aws_s3_bucket.backup.id
+
+  rule {
+    id     = "expire-old-versions"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+
+    expiration {
+      expired_object_delete_marker = true
+    }
+  }
+
+  # A lifecycle rule on noncurrent versions needs versioning in place first.
+  depends_on = [aws_s3_bucket_versioning.backup]
+}
+
+resource "aws_s3_bucket_public_access_block" "backup" {
+  bucket                  = aws_s3_bucket.backup.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_iam_role" "host" {
+  name = "firstline-host"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = ["sts:AssumeRole"]
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "managed" {
+  for_each = toset([
+    "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+  ])
+
+  role       = aws_iam_role.host.name
+  policy_arn = each.value
+}
+
+# No s3:DeleteObjectVersion and no bucket-settings actions: a compromised host can
+# overwrite or delete, but the previous versions stay for the lifecycle's 30 days.
+resource "aws_iam_role_policy" "litestream" {
+  name = "litestream-replica"
+  role = aws_iam_role.host.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetBucketLocation", "s3:ListBucket"]
+        Resource = [aws_s3_bucket.backup.arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+        Resource = ["${aws_s3_bucket.backup.arn}/*"]
+      },
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "host" {
+  name = "firstline-host"
+  role = aws_iam_role.host.name
+}
+
+resource "aws_instance" "host" {
+  ami                         = data.aws_ssm_parameter.ubuntu.value
+  instance_type               = "t4g.small"
+  subnet_id                   = aws_subnet.public.id
+  vpc_security_group_ids      = [aws_security_group.host.id]
+  iam_instance_profile        = aws_iam_instance_profile.host.name
+  associate_public_ip_address = false
+
+  metadata_options {
+    http_endpoint = "enabled"
+    http_tokens   = "required"
+  }
+
+  root_block_device {
+    volume_type = "gp3"
+    volume_size = 20
+    encrypted   = true
+  }
+
+  tags = { Name = "firstline" }
+
+  # The SQLite database lives on the root disk, so terraform must refuse any plan
+  # that replaces or destroys the host. The SSM parameter moves to each new Ubuntu
+  # image; following it would be such a replacement.
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes  = [ami]
+  }
+}
+
+resource "aws_eip" "host" {
+  domain = "vpc"
+
+  # A new address would break the DNS A record.
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_eip_association" "host" {
+  instance_id   = aws_instance.host.id
+  allocation_id = aws_eip.host.id
+}
