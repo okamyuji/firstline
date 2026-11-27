@@ -1,0 +1,29 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build and pack
+        id: pack
+        run: |
+          line=$(bash scripts/package.sh "$GITHUB_REF_NAME")
+          echo "$line"
+          echo "sha256=${line%% *}" >>"$GITHUB_OUTPUT"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA256: ${{ steps.pack.outputs.sha256 }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "dist/firstline-$GITHUB_REF_NAME-linux-arm64.tar.gz" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "firstline-$GITHUB_REF_NAME-linux-arm64.tar.gz SHA-256: $SHA256"
