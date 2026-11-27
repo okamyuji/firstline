@@ -143,7 +143,9 @@ resource "aws_iam_role" "host" {
 
 # AmazonSSMManagedInstanceCore already allows ssm:GetParameter on every parameter, and
 # the AWS managed key aws/ssm lets every principal of the account decrypt, so reading
-# the SecureString /firstline/token-key needs no statement of its own.
+# the SecureString /firstline/token-key needs no statement of its own. The same breadth
+# would let a compromised host read another system's SecureString; the parameters
+# policy below denies everything outside /firstline/.
 resource "aws_iam_role_policy_attachment" "managed" {
   for_each = toset([
     "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
@@ -173,6 +175,21 @@ resource "aws_iam_role_policy" "litestream" {
         Resource = ["${aws_s3_bucket.backup.arn}/*"]
       },
     ]
+  })
+}
+
+# An explicit Deny overrides the managed policy's Allow. A parameter whose name starts
+# with a slash has a single slash after "parameter" in its ARN.
+resource "aws_iam_role_policy" "parameters" {
+  name = "firstline-parameters-only"
+  role = aws_iam_role.host.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect      = "Deny"
+      Action      = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath", "ssm:GetParameterHistory"]
+      NotResource = ["arn:aws:ssm:*:*:parameter/firstline/*"]
+    }]
   })
 }
 

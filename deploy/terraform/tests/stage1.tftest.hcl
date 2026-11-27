@@ -91,6 +91,19 @@ run "role_can_replicate_but_not_remove_versions" {
   }
 }
 
+run "role_reads_only_the_firstline_parameters" {
+  command = apply
+
+  assert {
+    condition = jsondecode(aws_iam_role_policy.parameters.policy).Statement == [{
+      Effect      = "Deny"
+      Action      = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath", "ssm:GetParameterHistory"]
+      NotResource = ["arn:aws:ssm:*:*:parameter/firstline/*"]
+    }]
+    error_message = "the role must be denied every parameter outside /firstline/, which AmazonSSMManagedInstanceCore would otherwise let it read"
+  }
+}
+
 run "only_443_and_80_are_open" {
   command = apply
 

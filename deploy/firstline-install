@@ -23,18 +23,23 @@ log() { echo "firstline-install: $*"; }
 die() { echo "firstline-install: $*" >&2; exit 1; }
 
 # load_env reads KEY=VALUE lines verbatim, as systemd's EnvironmentFile does, since
-# firstline-cert-init.service reads the same file.
+# firstline-cert-init.service reads the same file. Only this script's own keys are
+# taken, so a stray PATH or LD_PRELOAD line cannot change what runs as root.
 load_env() {
-	local line
+	local line key
 	while IFS= read -r line || [ -n "$line" ]; do
 		case $line in '' | '#'*) continue ;; esac
-		export "${line%%=*}=${line#*=}"
+		key=${line%%=*}
+		[[ $key =~ ^(FIRSTLINE|LITESTREAM)_[A-Z0-9_]+$ ]] || die "unexpected key $key in install.env"
+		export "$key=${line#*=}"
 	done <"$1"
 }
 load_env "$etc/install.env"
 : "${FIRSTLINE_DOMAIN:?not set in install.env}" "${FIRSTLINE_ACME_EMAIL:?not set in install.env}"
 : "${LITESTREAM_BUCKET:?not set in install.env}"
 param=${FIRSTLINE_TOKEN_PARAM:-/firstline/token-key}
+# The name goes into a JSON body below.
+[[ $param =~ ^/[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$ ]] || die "FIRSTLINE_TOKEN_PARAM must be a path like /firstline/token-key"
 # The version and hash end up in a URL and a comparison; refuse anything else.
 [[ ${FIRSTLINE_VERSION:-} =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "FIRSTLINE_VERSION must look like v1.2.3"
 [[ ${FIRSTLINE_SHA256:-} =~ ^[0-9a-f]{64}$ ]] || die "FIRSTLINE_SHA256 must be 64 lowercase hex characters"
@@ -44,7 +49,7 @@ trap 'rm -rf "$work"' EXIT
 
 # fetch <url> <sha256> <file> downloads and stops unless the file has that hash.
 fetch() {
-	curl -fsSL --retry 3 -o "$3" "$1"
+	curl -fsSL --proto =https --proto-redir =https --retry 3 -o "$3" "$1"
 	local got
 	got=$(sha256sum "$3" | cut -d' ' -f1)
 	[ "$got" = "$2" ] || die "SHA-256 mismatch for $1: got $got, want $2"
@@ -122,6 +127,8 @@ CONFIG
 )
 FIRSTLINE_TOKEN_KEY=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["Parameter"]["Value"])' <<<"$response")
 [ -n "$FIRSTLINE_TOKEN_KEY" ] || die "$param is empty"
+# A line break would add a line of its own to env.
+[[ $FIRSTLINE_TOKEN_KEY != *[[:cntrl:]]* ]] || die "$param holds a control character"
 # shellcheck disable=SC2034 # set_env reads it by name
 FIRSTLINE_BASE_URL=https://$FIRSTLINE_DOMAIN
 

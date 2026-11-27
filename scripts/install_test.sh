@@ -82,7 +82,7 @@ ENV
 
 # install runs firstline-install; its output goes to $tmp/out.
 install() {
-	LOG=$tmp/log STATE=$tmp/state FIXTURES=$tmp/fixtures FAKE_SECRET=$secret PATH="$tmp/bin:$PATH" \
+	LOG=$tmp/log STATE=$tmp/state FIXTURES=$tmp/fixtures FAKE_SECRET=${FAKE_SECRET_OVERRIDE:-$secret} PATH="$tmp/bin:$PATH" \
 		FIRSTLINE_ROOT=$host FIRSTLINE_RELEASE_URL=https://releases.invalid/dl FIRSTLINE_WAIT_STEP=0 \
 		bash "$root/deploy/firstline-install" >"$tmp/out" 2>&1
 }
@@ -107,6 +107,32 @@ sed -i.bak 's/^FIRSTLINE_VERSION=.*/FIRSTLINE_VERSION=v1\/..\/9.8.7/' "$host/etc
 if install; then fail "install passed with a bad version"; fi
 ! grep -q '^curl' "$tmp/log" || fail "curl ran before the version was checked"
 
+# A hash that is not 64 lowercase hex characters is refused before anything is downloaded.
+reset_host
+sed -i.bak 's/^FIRSTLINE_SHA256=.*/FIRSTLINE_SHA256=abc/' "$host/etc/firstline/install.env"
+if install; then fail "install passed with a short hash"; fi
+grep -q 'FIRSTLINE_SHA256 must be' "$tmp/out" || fail "no message for the short hash: $(cat "$tmp/out")"
+! grep -q '^curl' "$tmp/log" || fail "curl ran before the hash was checked"
+
+# install.env sets only FIRSTLINE_ and LITESTREAM_ keys; PATH and the like are refused.
+reset_host
+echo 'PATH=/nonexistent' >>"$host/etc/firstline/install.env"
+if install; then fail "install passed with PATH in install.env"; fi
+grep -q 'unexpected key PATH' "$tmp/out" || fail "no message for the unexpected key: $(cat "$tmp/out")"
+
+# The parameter name goes into a JSON body, so only a plain path is accepted.
+reset_host
+echo 'FIRSTLINE_TOKEN_PARAM=/x","WithDecryption":false,"a":"' >>"$host/etc/firstline/install.env"
+if install; then fail "install passed with a parameter name holding a quote"; fi
+grep -q 'FIRSTLINE_TOKEN_PARAM must be' "$tmp/out" || fail "no message for the bad parameter name: $(cat "$tmp/out")"
+! grep -q '^curl' "$tmp/log" || fail "curl ran before the parameter name was checked"
+
+# A secret with a line break would add a line to env; refuse it.
+reset_host
+if FAKE_SECRET_OVERRIDE='abc\nFIRSTLINE_ADDR=:80' install; then fail "install passed with a line break in the secret"; fi
+grep -q 'control character' "$tmp/out" || fail "no message for the line break: $(cat "$tmp/out")"
+[ ! -e "$host/etc/firstline/env" ] || fail "env written from a secret with a line break"
+
 # Until the Elastic IP is associated the host has no route out: wait, then go on.
 reset_host
 FAKE_NO_IP=2 install || fail "install failed after the address appeared: $(cat "$tmp/out")"
@@ -130,6 +156,9 @@ for f in usr/local/bin/firstline usr/local/bin/firstline-cert-deploy usr/local/b
 done
 cmp -s "$host/usr/local/bin/firstline" "$tmp/firstline" || fail "the binary is not the one in the tarball"
 [ -d "$host/etc/firstline/tls" ] || fail "/etc/firstline/tls not created for the deploy hook"
+perm=$(stat -c %a "$host/etc/firstline/tls" 2>/dev/null || stat -f %Lp "$host/etc/firstline/tls")
+[ "$perm" = 750 ] || fail "/etc/firstline/tls mode $perm; want 750, as it holds the private key"
+grep -q -- '--proto =https --proto-redir =https' "$tmp/log" || fail "downloads may follow a redirect off https"
 grep -qxF "FIRSTLINE_TOKEN_KEY=$secret" "$host/etc/firstline/env" || fail "the secret is not in env"
 grep -qxF "FIRSTLINE_BASE_URL=https://tickets.example.com" "$host/etc/firstline/env" || fail "BASE_URL not set"
 grep -qxF "FIRSTLINE_ADDR=:443" "$host/etc/firstline/env" || fail "env is not based on firstline.env.example"
@@ -180,11 +209,18 @@ cert_init() {
 cert_init || fail "cert-init failed while DNS points elsewhere: $(cat "$tmp/out")"
 ! grep -q '^certbot' "$tmp/log" || fail "certbot ran before DNS pointed at the host"
 : >"$tmp/log"
+# 192.0.2.100 contains the host's 192.0.2.10; only an exact match counts.
+FAKE_DNS=192.0.2.100 cert_init || fail "cert-init failed while DNS points elsewhere: $(cat "$tmp/out")"
+! grep -q '^certbot' "$tmp/log" || fail "certbot ran when DNS named 192.0.2.100, not the host's 192.0.2.10"
+# Let's Encrypt allows 5 failed validations per hostname per hour; 15 minutes keeps a
+# failing certbot at 4.
+grep -qxF 'OnUnitActiveSec=15min' "$root/deploy/firstline-cert-init.timer" || fail "the timer would retry more than 4 times an hour"
+: >"$tmp/log"
 FAKE_DNS=192.0.2.10 FAKE_CERTBOT_FAIL=1 cert_init && fail "cert-init passed when certbot failed"
 ! grep -q '^systemctl' "$tmp/log" || fail "systemctl ran after certbot failed"
 : >"$tmp/log"
 FAKE_DNS=192.0.2.10 cert_init || fail "cert-init failed: $(cat "$tmp/out")"
-grep -qxF "certbot certonly --standalone -d tickets.example.com -m ops@example.com --agree-tos -n --deploy-hook /usr/local/bin/firstline-cert-deploy" "$tmp/log" || fail "certbot not run as designed"
+grep -qxF "certbot certonly --standalone -d tickets.example.com --email=ops@example.com --agree-tos -n --deploy-hook /usr/local/bin/firstline-cert-deploy" "$tmp/log" || fail "certbot not run as designed"
 [ "$(grep '^systemctl' "$tmp/log")" = "systemctl enable --now firstline
 systemctl disable --now firstline-cert-init.timer" ] || fail "cert-init did not start firstline and stop its timer"
 echo "install_test: ok"

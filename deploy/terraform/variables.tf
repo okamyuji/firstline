@@ -44,7 +44,7 @@ variable "domain" {
 }
 
 variable "firstline_version" {
-  description = "Release tag the host installs at first boot, such as v0.1.0."
+  description = "Release tag the host installs at first boot, such as v0.1.0. Changing it later does not upgrade a running host; rerun firstline-install there."
   type        = string
 
   validation {
@@ -54,7 +54,7 @@ variable "firstline_version" {
 }
 
 variable "firstline_sha256" {
-  description = "SHA-256 of firstline-<version>-linux-arm64.tar.gz, from the release notes."
+  description = "SHA-256 of firstline-<version>-linux-arm64.tar.gz, from the release notes. Used at first boot only, like firstline_version."
   type        = string
 
   validation {

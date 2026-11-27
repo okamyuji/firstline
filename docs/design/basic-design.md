@@ -511,7 +511,7 @@ firstlineは環境変数で設定します。
 | 保守 | Session Managerで入る。受信ポートを開けずに済み、追加の料金もない |
 | 公開アドレス | Elastic IPを1つ付け、DNSのAレコードに使う。停止しても番号が変わらない |
 | S3への経路 | ゲートウェイ型のVPCエンドポイントを通す。料金はかからない |
-| インスタンスロール | `CloudWatchAgentServerPolicy`と`AmazonSSMManagedInstanceCore`に加え、複製先のバケットだけに`s3:GetBucketLocation`、`s3:ListBucket`、`s3:GetObject`、`s3:PutObject`、`s3:DeleteObject`を許す |
+| インスタンスロール | `CloudWatchAgentServerPolicy`と`AmazonSSMManagedInstanceCore`に加え、複製先のバケットだけに`s3:GetBucketLocation`、`s3:ListBucket`、`s3:GetObject`、`s3:PutObject`、`s3:DeleteObject`を許す。`/firstline/`の外のパラメータは`ssm:GetParameter`、`ssm:GetParameters`、`ssm:GetParametersByPath`、`ssm:GetParameterHistory`を拒む |
 | メタデータ | IMDSv2を必須にする。Litestreamとエージェントはロールの一時的な認証情報をここから取る |
 | ディスク | gp3の20GBを暗号化して使う |
 | バケット | 東京のS3に置き、パブリックアクセスをすべてブロックする。バージョニングを有効にし、ライフサイクル規則で古い版を30日後に消す。版を消す権限（`s3:DeleteObjectVersion`）とバケットの設定を変える権限はロールに与えない（下の段落） |
@@ -569,7 +569,7 @@ firstlineの取得元はGitHub Releasesです。`v`で始まるタグを押す�
 | `cloudwatch-agent.json` | `/etc/firstline/cloudwatch-agent.json` |
 | `firstline.env.example` | `/etc/firstline/env`の元 |
 
-署名鍵はParameter StoreのSecureString `/firstline/token-key`に置き、AWS管理のキー`aws/ssm`で暗号化します。`AmazonSSMManagedInstanceCore`はすべてのパラメータに`ssm:GetParameter`を許しています（[ポリシーの文書](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonSSMManagedInstanceCore.html)）。`aws/ssm`はアカウントのすべてのIAMプリンシパルに復号を許すので（[Parameter Storeの権限の文書](https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-paramstore-access.html)）、ロールに足す権限はありません。値はuser dataにもTerraformのstateにも入りません。ロールの鍵は標準入力からcurlに渡し、署名鍵はシェルの組み込みの`printf`でファイルに書きます。どちらもコマンドラインに載らず、スクリプトの出力にも出ません。
+署名鍵はParameter StoreのSecureString `/firstline/token-key`に置き、AWS管理のキー`aws/ssm`で暗号化します。`AmazonSSMManagedInstanceCore`はすべてのパラメータに`ssm:GetParameter`を許しています（[ポリシーの文書](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonSSMManagedInstanceCore.html)）。`aws/ssm`はアカウントのすべてのIAMプリンシパルに復号を許すので（[Parameter Storeの権限の文書](https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-paramstore-access.html)）、読むための権限は足しません。このままではホストが乗っ取られたときに、同じアカウントのほかのシステムのSecureStringまで読まれます。そのため`/firstline/`の外のパラメータを読む操作を明示的に拒むポリシーをロールに付けます。明示的な拒否はマネージドポリシーの許可より優先します（[IAMのポリシーの評価の文書](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html)）。値はuser dataにもTerraformのstateにも入りません。ロールの鍵は標準入力からcurlに渡し、署名鍵はシェルの組み込みの`printf`でファイルに書きます。どちらもコマンドラインに載らず、スクリプトの出力にも出ません。
 
 `/etc/firstline/env`がすでにあるときは、`FIRSTLINE_TOKEN_KEY`と`FIRSTLINE_BASE_URL`の行だけを書き換え、ほかの行は残します。この2つはParameter Storeと`install.env`に従う値で、ほかの値は運用者が調整するものだからです。`put-parameter --overwrite`のあとにスクリプトを動かせば鍵が替わり、運用者が手で変えた値は版を上げても消えません。
 
@@ -588,7 +588,7 @@ firstlineの取得元はGitHub Releasesです。`v`で始まるタグを押す�
 
 最初の発行ではfirstlineがまだ動いていないので、スクリプトの手順2は何もしません。firstlineを起動するのは`firstline-cert-init`の役目です。
 
-`firstline-cert-init.timer`は有効にした直後と、その後5分ごとに`firstline-cert-init.service`を動かします。このサービスは`/etc/firstline/tls/fullchain.pem`があれば何もしません。証明書がないときは、まずIMDSv2からホストの公開アドレスを取り、ドメインがそのアドレスを引けるかを確かめます。Let's Encryptは検証の失敗を1つのドメインにつき1時間に5回までしか認めず、1,152回続けて失敗するとそのドメインの発行を止めます（[Let's Encryptの制限](https://letsencrypt.org/docs/rate-limits/)）。DNSのAレコードを書くまでcertbotを呼ばないのは、この上限を使い切らないためです。アドレスが合えばcertbotで証明書を取り、成功したら`systemctl enable --now firstline`でfirstlineを起動してタイマーを止める流れです。`FIRSTLINE_TLS_CERT`と`FIRSTLINE_TLS_KEY`は`/etc/firstline/tls/fullchain.pem`と`/etc/firstline/tls/privkey.pem`を指します。
+`firstline-cert-init.timer`は有効にした直後と、その後15分ごとに`firstline-cert-init.service`を動かします。このサービスは`/etc/firstline/tls/fullchain.pem`があれば何もしません。証明書がないときは、まずIMDSv2からホストの公開アドレスを取り、ドメインがそのアドレスを引けるかを確かめます。Let's Encryptは検証の失敗を1つのドメインにつき1時間に5回までしか認めず、1,152回続けて失敗するとそのドメインの発行を止めます（[Let's Encryptの制限](https://letsencrypt.org/docs/rate-limits/)）。DNSのAレコードを書くまでcertbotを呼ばず、呼ぶ間隔を15分にしているのは、この上限を使い切らないためです。DNSが合った後にcertbotの検証が失敗し続けても、試す回数は1時間に4回に収まります。アドレスが合えばcertbotで証明書を取り、成功したら`systemctl enable --now firstline`でfirstlineを起動してタイマーを止める流れです。`FIRSTLINE_TLS_CERT`と`FIRSTLINE_TLS_KEY`は`/etc/firstline/tls/fullchain.pem`と`/etc/firstline/tls/privkey.pem`を指します。
 
 firstlineは`http.Server`の`TLSConfig.Certificates`を空のままにし、`ListenAndServeTLS("", "")`で待ち受けます。`Certificates`が空なら、どの接続でも`GetCertificate`が呼ばれるためです。SIGHUPを受けると証明書と秘密鍵を読み直し、`GetCertificate`が返す証明書を`atomic.Pointer`で入れ替えます。SIGHUPの受け口は起動の最初に作ります。受け口がない間にSIGHUPが届くと、Goのプロセスは終了し、systemdの`Restart=on-failure`はその終了を再起動しないためです。読み直しに失敗したら古い証明書を使い続け、ERRORのログを書きます。再起動しないので、更新の時刻が販売中でも接続は途切れません。
 
