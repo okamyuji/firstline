@@ -32,3 +32,33 @@ variable "limit_load_items_per_sec" {
     error_message = "limit_load_items_per_sec must be positive; measure it as ADR-0003 describes."
   }
 }
+
+variable "domain" {
+  description = "Host name the DNS A record gives the Elastic IP; certbot gets its certificate and FIRSTLINE_BASE_URL is https://<domain>."
+  type        = string
+
+  validation {
+    condition     = can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$", var.domain)) && length(var.domain) <= 253
+    error_message = "domain must be a lowercase host name such as tickets.example.com."
+  }
+}
+
+variable "firstline_version" {
+  description = "Release tag the host installs at first boot, such as v0.1.0."
+  type        = string
+
+  validation {
+    condition     = can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+$", var.firstline_version))
+    error_message = "firstline_version must be a release tag such as v0.1.0."
+  }
+}
+
+variable "firstline_sha256" {
+  description = "SHA-256 of firstline-<version>-linux-arm64.tar.gz, from the release notes."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.firstline_sha256))
+    error_message = "firstline_sha256 must be 64 lowercase hex characters."
+  }
+}

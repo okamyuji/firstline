@@ -1,7 +1,7 @@
 # The mock provider makes these runs free of AWS credentials and of real resources;
 # they check what the configuration asks AWS for, against the deployment table in
 # docs/design/basic-design.md and ADR-0006. What a mock cannot show (the rule's
-# empty filter, ignore_changes on the AMI) is checked in scripts/deploy_test.sh.
+# empty filter, ignore_changes on the AMI and the user data) is checked in scripts/deploy_test.sh.
 mock_provider "aws" {
   # The provider validates alarm actions as ARNs, which a random mock value is not.
   mock_resource "aws_sns_topic" {
@@ -15,6 +15,9 @@ variables {
   backup_bucket            = "firstline-backup-test"
   alert_email              = "ops@example.com"
   limit_load_items_per_sec = 400
+  domain                   = "tickets.example.com"
+  firstline_version        = "v1.2.3"
+  firstline_sha256         = format("%064d", 7)
 }
 
 run "backup_bucket_keeps_old_versions_for_30_days" {
@@ -300,4 +303,83 @@ run "backup_bucket_hygiene" {
     condition     = aws_cloudwatch_log_group.metrics.name == "/firstline/metrics" && aws_cloudwatch_log_group.metrics.retention_in_days == 30
     error_message = "the EMF log group keeps 30 days like the other groups"
   }
+}
+
+# Terraform has no base64gunzip, so the checks read local.user_data and then pin the
+# instance's user_data_base64 to its gzip.
+run "user_data_installs_the_release_without_a_secret" {
+  command = apply
+
+  assert {
+    condition     = aws_instance.host.user_data_base64 == base64gzip(local.user_data)
+    error_message = "the host boots with the gzipped cloud-config of local.user_data"
+  }
+  assert {
+    condition     = startswith(local.user_data, "#cloud-config\n")
+    error_message = "cloud-init reads the user data as cloud-config only after the #cloud-config line"
+  }
+  assert {
+    condition = yamldecode(local.user_data).write_files[0] == {
+      path        = "/etc/firstline/install.env"
+      permissions = "0644"
+      content     = <<-EOT
+        FIRSTLINE_VERSION=v1.2.3
+        FIRSTLINE_SHA256=${format("%064d", 7)}
+        FIRSTLINE_DOMAIN=tickets.example.com
+        FIRSTLINE_ACME_EMAIL=ops@example.com
+        LITESTREAM_BUCKET=firstline-backup-test
+        FIRSTLINE_TOKEN_PARAM=/firstline/token-key
+      EOT
+    }
+    error_message = "install.env carries the version, hash, domain, mail address, bucket and the parameter name, and no secret"
+  }
+  assert {
+    condition = (
+      yamldecode(local.user_data).write_files[1].path == "/usr/local/sbin/firstline-install" &&
+      yamldecode(local.user_data).write_files[1].permissions == "0755" &&
+      yamldecode(local.user_data).write_files[1].content == file("../firstline-install")
+    )
+    error_message = "the install script is written verbatim from deploy/firstline-install"
+  }
+  assert {
+    condition     = yamldecode(local.user_data).runcmd == [["/usr/local/sbin/firstline-install"]]
+    error_message = "cloud-init runs the install script once"
+  }
+  assert {
+    condition     = length(keys(yamldecode(local.user_data))) == 2 && length(yamldecode(local.user_data).write_files) == 2
+    error_message = "the user data holds only the two files and the command"
+  }
+  assert {
+    # EC2 takes at most 16 KB of user data before base64.
+    condition     = length(aws_instance.host.user_data_base64) * 3 / 4 < 16384
+    error_message = "the user data must stay under the 16 KB limit of EC2"
+  }
+  assert {
+    condition     = aws_instance.host.user_data_replace_on_change == false
+    error_message = "a change of the user data must never replace the host"
+  }
+}
+
+run "domain_must_be_a_host_name" {
+  command = plan
+  variables {
+    domain = "https://tickets.example.com"
+  }
+  expect_failures = [var.domain]
+}
+
+run "firstline_version_must_be_a_release_tag" {
+  command = plan
+  variables {
+    firstline_version = "1.2.3"
+  }
+  expect_failures = [var.firstline_version]
+}
+
+run "firstline_sha256_must_be_64_hex_characters" {
+  command = plan
+  variables {
+    firstline_sha256 = "abc"
+  }
+  expect_failures = [var.firstline_sha256]
 }

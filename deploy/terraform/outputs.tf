@@ -9,7 +9,7 @@ output "instance_id" {
 }
 
 output "backup_bucket" {
-  description = "Bucket for LITESTREAM_BUCKET in /etc/firstline/litestream.env."
+  description = "Bucket Litestream replicates to; firstline-install writes it to /etc/firstline/litestream.env."
   value       = aws_s3_bucket.backup.bucket
 }
 

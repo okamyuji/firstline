@@ -141,6 +141,9 @@ resource "aws_iam_role" "host" {
   })
 }
 
+# AmazonSSMManagedInstanceCore already allows ssm:GetParameter on every parameter, and
+# the AWS managed key aws/ssm lets every principal of the account decrypt, so reading
+# the SecureString /firstline/token-key needs no statement of its own.
 resource "aws_iam_role_policy_attachment" "managed" {
   for_each = toset([
     "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
@@ -178,6 +181,34 @@ resource "aws_iam_instance_profile" "host" {
   role = aws_iam_role.host.name
 }
 
+# No secret here: the host reads FIRSTLINE_TOKEN_KEY from Parameter Store itself, so
+# neither the user data nor the state holds it. ACME mails expiry notices to the
+# address the alarms use.
+locals {
+  user_data = "#cloud-config\n${yamlencode({
+    write_files = [
+      {
+        path        = "/etc/firstline/install.env"
+        permissions = "0644"
+        content     = <<-EOT
+          FIRSTLINE_VERSION=${var.firstline_version}
+          FIRSTLINE_SHA256=${var.firstline_sha256}
+          FIRSTLINE_DOMAIN=${var.domain}
+          FIRSTLINE_ACME_EMAIL=${var.alert_email}
+          LITESTREAM_BUCKET=${aws_s3_bucket.backup.bucket}
+          FIRSTLINE_TOKEN_PARAM=/firstline/token-key
+        EOT
+      },
+      {
+        path        = "/usr/local/sbin/firstline-install"
+        permissions = "0755"
+        content     = file("${path.module}/../firstline-install")
+      },
+    ]
+    runcmd = [["/usr/local/sbin/firstline-install"]]
+  })}"
+}
+
 resource "aws_instance" "host" {
   ami                         = data.aws_ssm_parameter.ubuntu.value
   instance_type               = "t4g.small"
@@ -202,12 +233,17 @@ resource "aws_instance" "host" {
 
   tags = { Name = "firstline" }
 
+  # cloud-init runs the user data at first boot only; upgrades rerun firstline-install
+  # on the host, so a change here must neither replace nor restart the host.
+  user_data_base64            = base64gzip(local.user_data)
+  user_data_replace_on_change = false
+
   # The SQLite database lives on the root disk, so terraform must refuse any plan
   # that replaces or destroys the host. The SSM parameter moves to each new Ubuntu
   # image; following it would be such a replacement.
   lifecycle {
     prevent_destroy = true
-    ignore_changes  = [ami]
+    ignore_changes  = [ami, user_data_base64]
   }
 }
 

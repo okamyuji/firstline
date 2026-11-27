@@ -109,8 +109,9 @@ lc=$(block aws_s3_bucket_lifecycle_configuration backup)
 grep -qxF '    filter {}' <<<"$lc" || fail "the lifecycle rule must use an empty filter, so it covers every object"
 ! grep -qE '^ +(prefix|tag|and|object_size_)' <<<"$lc" || fail "the lifecycle rule must not narrow the objects it covers"
 host=$(block aws_instance host)
-grep -qxF '    ignore_changes  = [ami]' <<<"$host" ||
-	fail "aws_instance.host must ignore AMI changes, or a new Ubuntu image replaces the host and its database"
+grep -qxF '    ignore_changes  = [ami, user_data_base64]' <<<"$host" ||
+	fail "aws_instance.host must ignore AMI and user data changes, or a new Ubuntu image or release replaces the host and its database"
+grep -qxF '  user_data_replace_on_change = false' <<<"$host" || fail "aws_instance.host must not be replaced when its user data changes"
 # A plan that replaces or destroys the host would take the SQLite database on its root
 # disk with it, and a new Elastic IP would break the DNS record; terraform must refuse.
 grep -qxF '    prevent_destroy = true' <<<"$host" || fail "aws_instance.host must set prevent_destroy"
