@@ -179,7 +179,9 @@ resource "aws_iam_role_policy" "litestream" {
 }
 
 # An explicit Deny overrides the managed policy's Allow. A parameter whose name starts
-# with a slash has a single slash after "parameter" in its ARN.
+# with a slash has a single slash after "parameter" in its ARN. This also denies the
+# AmazonCloudWatch-* parameters CloudWatchAgentServerPolicy allows; the agent here
+# reads its config from a file instead.
 resource "aws_iam_role_policy" "parameters" {
   name = "firstline-parameters-only"
   role = aws_iam_role.host.id

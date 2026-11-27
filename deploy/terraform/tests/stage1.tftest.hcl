@@ -102,6 +102,10 @@ run "role_reads_only_the_firstline_parameters" {
     }]
     error_message = "the role must be denied every parameter outside /firstline/, which AmazonSSMManagedInstanceCore would otherwise let it read"
   }
+  assert {
+    condition     = aws_iam_role_policy.parameters.role == aws_iam_role.host.id
+    error_message = "the Deny must be on the host role"
+  }
 }
 
 run "only_443_and_80_are_open" {
