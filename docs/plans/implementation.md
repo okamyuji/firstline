@@ -467,7 +467,7 @@ func Every(ctx context.Context, d time.Duration, f func(context.Context)) // ctx
 ```go
 func HashPassword(pw string) (string, error)       // Argon2id、64MiB、3回、並列4
 func VerifyPassword(hash, pw string) (bool, error)
-type Limiter struct{ /* ... */ }                   // 同時計算をruntime.NumCPU()までに抑える
+type Limiter struct{ /* ... */ }                   // 同時計算をruntime.GOMAXPROCS(0)までに抑える
 func (l *Limiter) Acquire(ctx context.Context) error
 type Throttle struct{ /* ... */ }
 func (t *Throttle) Allowed(email, ip string, now time.Time) bool

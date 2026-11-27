@@ -187,7 +187,7 @@ func TestServeSendsEMFToTheConfiguredAddressEveryMinute(t *testing.T) {
 func TestServeGivesEveryRequestTheDeadline(t *testing.T) {
 	t.Parallel()
 	wr, _ := onSale(t, nil)
-	for range runtime.NumCPU() {
+	for range runtime.GOMAXPROCS(0) {
 		if err := wr.svc.Limiter.Acquire(t.Context()); err != nil {
 			t.Fatal(err)
 		}

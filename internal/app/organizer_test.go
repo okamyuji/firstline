@@ -80,7 +80,7 @@ func (o *orgEnv) lastSeen(id string) int64 {
 }
 
 func (o *orgEnv) fillLimiter() {
-	for range runtime.NumCPU() {
+	for range runtime.GOMAXPROCS(0) {
 		if err := o.sv.Limiter.Acquire(o.t.Context()); err != nil {
 			o.t.Fatal(err)
 		}

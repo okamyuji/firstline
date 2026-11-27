@@ -334,7 +334,7 @@ TLA+の仕様は`spec/Purchase.tla`、TLCの設定は`spec/Purchase.cfg`です�
 
 ## 認証
 
-主催者はArgon2idで保存したパスワードとセッションCookieで認証します。Argon2idの引数は[RFC 9106](https://www.rfc-editor.org/rfc/rfc9106#section-4)の2番目の推奨値で、メモリ64MiB、反復3回、並列4です。同時に計算するArgon2idの数はCPU数までに抑え、空きを待つ間にリクエストの期限が過ぎたら503を返します。多数のログインが同時に来てもメモリが尽きないようにするためです。
+主催者はArgon2idで保存したパスワードとセッションCookieで認証します。Argon2idの引数は[RFC 9106](https://www.rfc-editor.org/rfc/rfc9106#section-4)の2番目の推奨値で、メモリ64MiB、反復3回、並列4です。同時に計算するArgon2idの数は`runtime.GOMAXPROCS(0)`までに抑え、空きを待つ間にリクエストの期限が過ぎたら503を返します。多数のログインが同時に来てもメモリが尽きないようにするためです。`GOMAXPROCS`はコンテナのCPUの割り当てに従うので、ホストのCPUの総数を数える`runtime.NumCPU()`は使いません。
 
 | 項目 | 値 |
 |---|---|

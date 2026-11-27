@@ -129,7 +129,7 @@ func TestAdminLoginIsThrottledAfterFiveFailures(t *testing.T) {
 func TestAdminLoginReturns503WhenNoArgonSlotIsFree(t *testing.T) {
 	e := newEnv(t, 0)
 	e.organizer()
-	for range runtime.NumCPU() {
+	for range runtime.GOMAXPROCS(0) {
 		if err := e.svc.Limiter.Acquire(t.Context()); err != nil {
 			t.Fatal(err)
 		}
